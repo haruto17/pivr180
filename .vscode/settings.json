@@ -1,7 +1,17 @@
 {
     "cSpell.words": [
+        "Bambu",
+        "Colour",
         "Entaniya",
+        "gpiozero",
+        "libcamera",
         "MBFL",
-        "pivr"
+        "MJPEG",
+        "Picamera",
+        "pivr",
+        "pytest",
+        "SSCI",
+        "Tauri",
+        "venv"
     ]
 }
