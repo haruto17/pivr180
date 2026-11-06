@@ -1,0 +1,39 @@
+{
+    "$schema": "https://json.schemastore.org/claude-code-settings.json",
+    "permissions": {
+        "defaultMode": "auto",
+        "allow": [
+            "Bash(git status *)",
+            "Bash(git diff *)",
+            "Bash(git log *)",
+            "Bash(git show *)",
+            "Bash(git commit *)",
+            "Bash(git push *)",
+            "Bash(codex review *)"
+        ],
+        "deny": [
+            "Bash(sudo *)",
+            "Bash(su *)",
+            "Bash(rm -rf *)",
+            "Bash(rm -fr *)",
+            "Bash(git clean *)",
+            "Bash(git reset --hard *)",
+            "Bash(git push --force *)",
+            "Bash(gh repo delete *)",
+            "Bash(gh repo archive *)",
+            "Bash(gh auth logout *)",
+            "Read(**/.env)",
+            "Read(**/.env.*)",
+            "Read(**/secrets/**)",
+            "Read(**/.ssh/**)",
+            "Edit(**/.env)",
+            "Edit(**/.env.*)",
+            "Edit(**/secrets/**)",
+            "Edit(**/.ssh/**)"
+        ]
+    },
+    "sandbox": {
+        "enabled": true,
+        "autoAllowBashIfSandboxed": true
+    }
+}
