@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "software_version": "0.1.0",
+  "cameras": {
+    "left": {
+      "camera_id": "/base/axi/pcie@1000120000/rp1/i2c@88000/imx477@1a",
+      "model": "imx477",
+      "sensor_timestamp_ns": 123456789012345
+    },
+    "right": {
+      "camera_id": "/base/axi/pcie@1000120000/rp1/i2c@80000/imx477@1a",
+      "model": "imx477",
+      "sensor_timestamp_ns": 123456789262345
+    }
+  },
+  "sync": {
+    "timestamp_diff_ns": 250000,
+    "attempts": 1,
+    "warning": false
+  },
+  "exposure": {
+    "exposure_time_us": 8000,
+    "analogue_gain": 1.5,
+    "colour_gains": [2.1, 1.8]
+  }
+}
