@@ -55,21 +55,13 @@ class CaptureStorage:
             raise
 
     def save_capture(self, cameras: CameraPair, synced: SyncedPair) -> Path:
-        return self.save_pair(
-            synced.left, synced.right, meta=build_meta(cameras, synced)
-        )
-
-    def save_pair(
-        self, left: Frame, right: Frame, meta: Mapping[str, Any] | None = None
-    ) -> Path:
-        _check_size("left", left)
-        _check_size("right", right)
-        meta_text = None if meta is None else _serialize_meta(meta)
+        _check_size("left", synced.left)
+        _check_size("right", synced.right)
+        meta_text = _serialize_meta(build_meta(cameras, synced))
         with self.new_capture() as directory:
-            _save_frame(left, directory / LEFT_FILENAME)
-            _save_frame(right, directory / RIGHT_FILENAME)
-            if meta_text is not None:
-                _write_meta(meta_text, directory / META_FILENAME)
+            _save_frame(synced.left, directory / LEFT_FILENAME)
+            _save_frame(synced.right, directory / RIGHT_FILENAME)
+            _write_meta(meta_text, directory / META_FILENAME)
         return directory
 
     def _reserve_directory(self) -> Path:
