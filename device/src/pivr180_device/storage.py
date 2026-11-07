@@ -50,6 +50,8 @@ class CaptureStorage:
             raise
 
     def save_pair(self, left: Frame, right: Frame) -> Path:
+        _check_size("left", left)
+        _check_size("right", right)
         with self.new_capture() as directory:
             _save_frame(left, directory / LEFT_FILENAME)
             _save_frame(right, directory / RIGHT_FILENAME)
@@ -79,6 +81,15 @@ class CaptureStorage:
             return directory
         raise CaptureSaveError(
             f"more than {MAX_CAPTURES_PER_SECOND} captures in {prefix} under {self._root}"
+        )
+
+
+def _check_size(side: str, frame: Frame) -> None:
+    if frame.size != STILL_SIZE:
+        width, height = frame.size
+        raise CaptureSaveError(
+            f"{side} frame is {width}x{height}, expected "
+            f"{STILL_SIZE[0]}x{STILL_SIZE[1]}"
         )
 
 

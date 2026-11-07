@@ -16,7 +16,9 @@ from pivr180_device.storage import (
 CAPTURE_TIME = datetime(2026, 11, 7, 12, 34, 56, 789_000, tzinfo=UTC)
 
 
-def make_frame(image: bytes = b"jpeg") -> FakeFrame:
+def make_frame(
+    image: bytes = b"jpeg", size: tuple[int, int] = (4056, 3040)
+) -> FakeFrame:
     return FakeFrame(
         FrameMetadata(
             sensor_timestamp_ns=0,
@@ -25,6 +27,7 @@ def make_frame(image: bytes = b"jpeg") -> FakeFrame:
             colour_gains=(2.0, 1.5),
         ),
         image=image,
+        size=size,
     )
 
 
@@ -35,6 +38,10 @@ class FailingFrame:
     @property
     def metadata(self) -> FrameMetadata:
         return make_frame().metadata
+
+    @property
+    def size(self) -> tuple[int, int]:
+        return STILL_SIZE
 
     def save(self, path: Path, quality: int) -> None:
         if self._partial:
@@ -220,3 +227,17 @@ def test_new_capture_notes_cleanup_failure_on_original_error(tmp_path, monkeypat
     assert any(
         "failed to remove incomplete capture" in n for n in excinfo.value.__notes__
     )
+
+
+@pytest.mark.parametrize("side", ["left", "right"])
+def test_rejects_frame_with_unexpected_resolution(tmp_path, side):
+    frames = {"left": make_frame(), "right": make_frame()}
+    frames[side] = make_frame(size=(1920, 1080))
+    storage = CaptureStorage(root=tmp_path, clock=fixed_clock())
+
+    with pytest.raises(CaptureSaveError, match=f"{side} frame is 1920x1080"):
+        storage.save_pair(frames["left"], frames["right"])
+
+    assert frames["left"].saves == []
+    assert frames["right"].saves == []
+    assert list(tmp_path.iterdir()) == []
