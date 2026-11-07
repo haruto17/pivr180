@@ -1,17 +1,23 @@
 # workflow.md
 
-1. Preparation
-2. Review milestones and select a task
-3. Create an issue and a branch
-4. Implement
-5. Self review
-6. Create a pull request
-7. Wrap up and report
+Each step is labeled with who performs it. See the Team section of CLAUDE.md for team composition.
+
+1. Preparation (Implementer)
+2. Review milestones and select a task (Implementer)
+3. Create an issue, a branch, and a worktree (Implementer)
+4. Implement (Implementer)
+5. Self review (Implementer)
+6. Create a pull request (Implementer)
+7. Review cycle (Reviewer, Implementer)
+8. Merge (Implementer)
+9. Clean up and report (Implementer)
 
 ## 1. Preparation
 
-1. Run `git switch main && git pull` to get the latest changes, then make sure the working tree is clean.
+1. In the main repository directory, run `git switch main && git pull` to get the latest changes, then make sure the working tree is clean.
 2. Run `gh issue list` and `gh pr list` to check whether an issue or PR for the same task already exists.
+3. Run `git worktree list` to check which tasks other teams are currently working on.
+4. If 4 teams are already working in parallel, do not start a new team.
 
 ## 2. Review milestones and select a task
 
@@ -25,9 +31,10 @@ Choose a task using the following criteria, in order of priority:
 **Notes**
 
 - If an issue or PR with the same content already exists, use it instead of creating a new one.
-- Do not work on an issue that is already assigned to someone else.
+- Do not work on an issue that is already assigned. Assigned issues are being handled by another team or person.
+- Avoid tasks that are likely to change the same files as tasks other teams are working on.
 
-## 3. Create an issue and a branch
+## 3. Create an issue, a branch, and a worktree
 
 ### 3.1 Create an issue
 
@@ -51,15 +58,27 @@ gh issue create \
   --label "<Category label>"
 ```
 
-### 3.2 Create a branch
+### 3.2 Claim the issue
 
-Run the following command to create a branch linked to the issue:
+Assign the issue to yourself immediately so other teams do not pick the same task:
+
+```
+gh issue edit <Issue number> --add-assignee @me
+```
+
+### 3.3 Create a branch and a worktree
+
+Run the following commands to create a branch linked to the issue and a dedicated worktree for it. Do not use `--checkout`, since each team works in its own worktree rather than in the main repository directory.
 
 ```
 gh issue develop <Issue number> \
   --name <Branch name> \
-  --checkout
+  --base main
+git fetch origin
+git worktree add ../worktrees/<Issue number> <Branch name>
 ```
+
+Do all subsequent work for this task inside `../worktrees/<Issue number>`.
 
 **Branch naming convention**: `<category>/<issue number>-<short description>`
 
@@ -72,7 +91,7 @@ gh issue develop <Issue number> \
 | `docs` | Documentation |
 | `chore` | Configuration, build, etc. |
 
-### 3.3 Post an implementation plan on the issue
+### 3.4 Post an implementation plan on the issue
 
 Before you start implementing, read the relevant code. Then run the following command to post your plan as a comment on the issue:
 
@@ -86,10 +105,12 @@ gh issue comment <Issue number> \
 - Keep changes to the minimum needed to meet the acceptance criteria. Do not refactor code unrelated to the issue.
 - Split commits into small, meaningful units.
 - Commit messages must follow the [Conventional Commits](https://raw.githubusercontent.com/conventional-commits/conventionalcommits.org/refs/heads/master/content/v1.0.0/index.md) specification.
+- Do not push after each commit. Push only once all implementation is complete (step 6).
 
 ## 5. Self review
 
 - Are all acceptance criteria met?
+- Do all tests and lint pass?
 - Is there any leftover debug code (such as `print` statements) or unnecessary comments?
 - Are there any changes outside the scope of this issue?
 
@@ -111,24 +132,79 @@ gh pr create \
   --label "<Category label>"
 ```
 
-## 7. Wrap up and report
+3. Tell the Reviewer the PR number.
 
-Report the following:
+## 7. Review cycle
 
-- URLs of the issue and pull request you created
-- A summary of the implementation
-- Any unresolved concerns
+Codex CLI reviews open PRs periodically, separately from the team.
 
-## When to stop and ask a human
+### 7.1 Reviewer: check the PR
 
-If any of the following happens, stop working and describe the situation in a comment on the issue:
+Every 10 minutes, check the PR for new Codex review comments and the "LGTM by Codex" comment:
+
+```
+gh pr view <PR number> --comments
+gh api repos/{owner}/{repo}/pulls/<PR number>/comments
+```
+
+- If there are new review comments, report them to the Implementer (go to 7.2).
+- If "LGTM by Codex" was posted after the latest push, instruct the Implementer to merge (go to step 8). Ignore any "LGTM by Codex" posted before the latest push.
+- If no Codex review has appeared for 1 hour, stop and ask the owner (see "When to stop and ask the owner").
+
+### 7.2 Implementer: fix
+
+1. Fix the issues pointed out in the review comments.
+2. If the branch has fallen behind `main` because another team merged, merge `main` into the branch. Do not rebase, since force-pushing is not allowed.
+3. Perform the self review in step 5 again.
+4. Push once all fixes for this review round are complete.
+5. Reply to each review comment with how it was addressed, or why it was not.
+6. Tell the Reviewer the fixes have been pushed, then go back to 7.1.
+
+Repeat 7.1 and 7.2 until "LGTM by Codex" is posted.
+
+- To defer a `warning`, create a follow-up issue and reply to the review comment with the reason for deferring and a link to the issue. `critical` and `error` issues cannot be deferred.
+
+## 8. Merge
+
+Merge only after the Reviewer has confirmed a valid "LGTM by Codex" and instructed you to merge.
+
+1. Make sure CI is passing. If it is failing, do not merge; fix it and go back to step 7.
+2. Run the following command to merge the PR:
+
+```
+gh pr merge <PR number> --merge
+```
+
+## 9. Clean up and report
+
+1. From the main repository directory, remove the worktree and the local branch:
+
+```
+git worktree remove ../worktrees/<Issue number>
+git branch -d <Branch name>
+```
+
+2. Report the following:
+
+   - URLs of the issue and pull request
+   - A summary of the implementation
+   - Any unresolved concerns
+
+3. The team disbands.
+
+## When to stop and ask the owner
+
+If any of the following happens, stop working, describe the situation in a comment mentioning "@haruto17", and wait for the owner's instructions. Comment on the PR if one exists; otherwise comment on the issue.
 
 - Meeting the acceptance criteria requires changes far beyond the scope of the issue.
 - A decision about the architecture or state management approach is needed.
+- A review comment requires the owner's decision (e.g. spec changes, scope changes, design decisions that would need an ADR).
 - The same error persists after three attempts to fix it.
+- No Codex review has appeared for 1 hour after the PR was created or after the latest push.
 
 ## Prohibited actions
 
 - Pushing directly to the `main` branch
-- Merging pull requests
+- Merging a pull request without a valid "LGTM by Codex" (posted after the latest push)
+- Force-pushing or rewriting history after the PR is created
 - Deleting or skipping tests just to make them pass
