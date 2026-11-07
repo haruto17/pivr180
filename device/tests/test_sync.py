@@ -185,15 +185,33 @@ def test_interleaves_left_and_right_captures():
     assert order == ["left", "right", "left", "right"]
 
 
-def test_respects_custom_tolerance_and_attempts():
-    pair, _, _ = make_pair([make_frame(0)], [make_frame(2_000)])
+@pytest.mark.parametrize(
+    "right_offsets_ns",
+    [
+        [0, 0, 0],
+        [1_000_000, 0, 0],
+        [1_000_001, 1_000_000, 0],
+        [1_000_001, 2_000_000, 1_000_000],
+        [1_000_001, 1_000_001, 1_000_001],
+        [5_000_000, 1_500_000, 3_000_000],
+    ],
+)
+def test_result_is_consistent_with_meta_schema_sync_rules(right_offsets_ns):
+    left_frames = [make_frame(i * 100_000_000) for i in range(3)]
+    right_frames = [
+        make_frame(i * 100_000_000 + offset)
+        for i, offset in enumerate(right_offsets_ns)
+    ]
+    pair, _, _ = make_pair(left_frames, right_frames)
 
-    result = capture_synced_pair(
-        pair, frames_per_camera=1, max_attempts=1, max_diff_ns=1_000
-    )
+    result = capture_synced_pair(pair, frames_per_camera=1)
 
-    assert result.attempts == 1
-    assert result.warning is True
+    assert 1 <= result.attempts <= 3
+    if result.timestamp_diff_ns <= 1_000_000:
+        assert result.warning is False
+    else:
+        assert result.warning is True
+        assert result.attempts == 3
 
 
 def test_propagates_capture_errors():
@@ -203,19 +221,12 @@ def test_propagates_capture_errors():
         capture_synced_pair(pair, frames_per_camera=1)
 
 
-@pytest.mark.parametrize(
-    "kwargs",
-    [
-        {"frames_per_camera": 0},
-        {"max_attempts": 0},
-        {"max_diff_ns": -1},
-    ],
-)
-def test_rejects_invalid_arguments(kwargs):
+@pytest.mark.parametrize("frames_per_camera", [0, -1])
+def test_rejects_invalid_frames_per_camera(frames_per_camera):
     pair, left, right = make_pair([make_frame(0)], [make_frame(0)])
 
     with pytest.raises(ValueError):
-        capture_synced_pair(pair, **kwargs)
+        capture_synced_pair(pair, frames_per_camera=frames_per_camera)
 
     assert remaining(left) == 1
     assert remaining(right) == 1
