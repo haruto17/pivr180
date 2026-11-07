@@ -1,10 +1,12 @@
+import json
 from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
 
-from pivr180_device.camera import FrameMetadata
-from pivr180_device.camera.fake import FakeFrame
+from pivr180_device.camera import CameraPair, FrameMetadata
+from pivr180_device.camera.fake import FakeCamera, FakeFrame
+from pivr180_device.meta import build_meta
 from pivr180_device.storage import (
     DEFAULT_CAPTURE_ROOT,
     JPEG_QUALITY,
@@ -12,6 +14,7 @@ from pivr180_device.storage import (
     CaptureSaveError,
     CaptureStorage,
 )
+from pivr180_device.sync import SyncedPair
 
 CAPTURE_TIME = datetime(2026, 11, 7, 12, 34, 56, 789_000, tzinfo=UTC)
 
@@ -240,4 +243,138 @@ def test_rejects_frame_with_unexpected_resolution(tmp_path, side):
 
     assert frames["left"].saves == []
     assert frames["right"].saves == []
+    assert list(tmp_path.iterdir()) == []
+
+
+def make_cameras() -> CameraPair:
+    return CameraPair(left=FakeCamera("left-camera"), right=FakeCamera("right-camera"))
+
+
+def timed_frame(
+    timestamp_ns: int, image: bytes = b"", size: tuple[int, int] = STILL_SIZE
+) -> FakeFrame:
+    return FakeFrame(
+        FrameMetadata(
+            sensor_timestamp_ns=timestamp_ns,
+            exposure_time_us=10_000,
+            analogue_gain=1.0,
+            colour_gains=(2.0, 1.5),
+        ),
+        image=image,
+        size=size,
+    )
+
+
+def make_synced(
+    left=None, right=None, attempts: int = 1, warning: bool = False
+) -> SyncedPair:
+    return SyncedPair(
+        left=left or timed_frame(1_000_000_000, b"left-image"),
+        right=right or timed_frame(1_000_250_000, b"right-image"),
+        attempts=attempts,
+        warning=warning,
+    )
+
+
+def read_meta(directory: Path):
+    return json.loads((directory / "meta.json").read_text(encoding="utf-8"))
+
+
+def test_save_capture_writes_images_and_meta_into_one_directory(tmp_path):
+    storage = CaptureStorage(root=tmp_path, clock=fixed_clock())
+
+    directory = storage.save_capture(make_cameras(), make_synced())
+
+    assert directory == tmp_path / "20261107-123456-000"
+    assert sorted(p.name for p in directory.iterdir()) == [
+        "left.jpg",
+        "meta.json",
+        "right.jpg",
+    ]
+    assert (directory / "left.jpg").read_bytes() == b"left-image"
+    assert (directory / "right.jpg").read_bytes() == b"right-image"
+
+
+@pytest.mark.parametrize(
+    ("right_timestamp_ns", "attempts", "warning"),
+    [(1_000_250_000, 1, False), (1_001_500_000, 3, True)],
+    ids=["synced", "warning"],
+)
+def test_saved_meta_conforms_to_schema(
+    tmp_path, meta_validator, right_timestamp_ns, attempts, warning
+):
+    cameras = make_cameras()
+    synced = make_synced(
+        right=timed_frame(right_timestamp_ns), attempts=attempts, warning=warning
+    )
+    storage = CaptureStorage(root=tmp_path, clock=fixed_clock())
+
+    directory = storage.save_capture(cameras, synced)
+
+    meta = read_meta(directory)
+    meta_validator.validate(meta)
+    assert meta == build_meta(cameras, synced)
+    assert meta["sync"]["warning"] is warning
+
+
+def test_save_pair_without_meta_does_not_write_meta_json(tmp_path):
+    storage = CaptureStorage(root=tmp_path, clock=fixed_clock())
+
+    directory = storage.save_pair(make_frame(), make_frame())
+
+    assert not (directory / "meta.json").exists()
+
+
+def test_failed_image_save_leaves_no_meta_behind(tmp_path):
+    storage = CaptureStorage(root=tmp_path, clock=fixed_clock())
+
+    with pytest.raises(CaptureSaveError, match="right.jpg"):
+        storage.save_capture(make_cameras(), make_synced(right=FailingFrame()))
+
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_failed_meta_write_removes_saved_images(tmp_path, monkeypatch):
+    storage = CaptureStorage(root=tmp_path, clock=fixed_clock())
+    original_write_text = Path.write_text
+
+    def fail_meta(self, *args, **kwargs):
+        if self.name == "meta.json":
+            raise OSError("disk full")
+        return original_write_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "write_text", fail_meta)
+
+    with pytest.raises(CaptureSaveError, match="meta.json") as excinfo:
+        storage.save_capture(make_cameras(), make_synced())
+
+    assert isinstance(excinfo.value.__cause__, OSError)
+    assert list(tmp_path.iterdir()) == []
+
+
+@pytest.mark.parametrize(
+    "meta",
+    [{"analogue_gain": float("nan")}, {"colour_gains": {1.0, 2.0}}],
+    ids=["nan", "not-json"],
+)
+def test_unserializable_meta_saves_nothing(tmp_path, meta):
+    left = make_frame()
+    right = make_frame()
+    storage = CaptureStorage(root=tmp_path, clock=fixed_clock())
+
+    with pytest.raises(CaptureSaveError, match="serialize capture meta"):
+        storage.save_pair(left, right, meta=meta)
+
+    assert left.saves == []
+    assert right.saves == []
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_save_capture_rejects_frame_with_unexpected_resolution(tmp_path):
+    storage = CaptureStorage(root=tmp_path, clock=fixed_clock())
+    synced = make_synced(right=timed_frame(1_000_250_000, size=(1920, 1080)))
+
+    with pytest.raises(CaptureSaveError, match="right frame is 1920x1080"):
+        storage.save_capture(make_cameras(), synced)
+
     assert list(tmp_path.iterdir()) == []
