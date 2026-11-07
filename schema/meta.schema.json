@@ -1,0 +1,113 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/haruto17/pivr180/schema/meta.schema.json",
+  "title": "pivr180 capture meta",
+  "description": "Metadata written by device alongside left.jpg and right.jpg for each capture.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "software_version", "cameras", "sync", "exposure"],
+  "properties": {
+    "schema_version": {
+      "description": "Version of this schema the file conforms to.",
+      "const": 1
+    },
+    "software_version": {
+      "description": "Version of the device software that wrote the capture.",
+      "type": "string",
+      "minLength": 1
+    },
+    "cameras": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["left", "right"],
+      "properties": {
+        "left": { "$ref": "#/$defs/camera" },
+        "right": { "$ref": "#/$defs/camera" }
+      }
+    },
+    "sync": {
+      "description": "Result of software synchronisation between the left and right frames.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["timestamp_diff_ns", "attempts", "warning"],
+      "properties": {
+        "timestamp_diff_ns": {
+          "description": "Absolute difference between the left and right sensor timestamps in nanoseconds.",
+          "type": "integer",
+          "minimum": 0
+        },
+        "attempts": {
+          "description": "Number of capture attempts made, including the saved one.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 3
+        },
+        "warning": {
+          "description": "True when the difference still exceeded 1 ms after the final attempt.",
+          "type": "boolean"
+        }
+      },
+      "if": {
+        "properties": { "timestamp_diff_ns": { "maximum": 1000000 } }
+      },
+      "then": {
+        "properties": { "warning": { "const": false } }
+      },
+      "else": {
+        "properties": { "warning": { "const": true }, "attempts": { "const": 3 } }
+      }
+    },
+    "exposure": {
+      "description": "Exposure and white balance locked identically on both cameras at shutter time (ADR 0003).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["exposure_time_us", "analogue_gain", "colour_gains"],
+      "properties": {
+        "exposure_time_us": {
+          "description": "libcamera ExposureTime in microseconds.",
+          "type": "integer",
+          "minimum": 1
+        },
+        "analogue_gain": {
+          "description": "libcamera AnalogueGain.",
+          "type": "number",
+          "minimum": 1
+        },
+        "colour_gains": {
+          "description": "libcamera ColourGains as [red, blue].",
+          "type": "array",
+          "prefixItems": [
+            { "type": "number", "exclusiveMinimum": 0 },
+            { "type": "number", "exclusiveMinimum": 0 }
+          ],
+          "minItems": 2,
+          "maxItems": 2
+        }
+      }
+    }
+  },
+  "$defs": {
+    "camera": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["camera_id", "model", "sensor_timestamp_ns"],
+      "properties": {
+        "camera_id": {
+          "description": "libcamera camera id.",
+          "type": "string",
+          "minLength": 1
+        },
+        "model": {
+          "description": "Sensor model reported by libcamera (e.g. imx477).",
+          "type": "string",
+          "minLength": 1
+        },
+        "sensor_timestamp_ns": {
+          "description": "Picamera2 SensorTimestamp of the saved frame in nanoseconds.",
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    }
+  }
+}
