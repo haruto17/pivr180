@@ -14,6 +14,11 @@ T = TypeVar("T")
 # Not exact equality: the driver rounds ExposureTime to whole sensor lines and
 # gains to register steps, so reported values can differ slightly from requests.
 APPLIED_REL_TOL = 0.01
+# Not checked from the first frame: frames already exposing or queued when
+# set_controls is called keep the old settings, and libcamera's delayed controls
+# apply ExposureTime/AnalogueGain to the sensor only a couple of frames later.
+DEFAULT_SETTLE_FRAMES = 4
+DEFAULT_STABLE_FRAMES = 3
 DEFAULT_MAX_WAIT_FRAMES = 30
 
 
@@ -76,13 +81,24 @@ class ExposureSettings:
 
 class ExposureSync:
     def __init__(
-        self, pair: CameraPair, max_wait_frames: int = DEFAULT_MAX_WAIT_FRAMES
+        self,
+        pair: CameraPair,
+        settle_frames: int = DEFAULT_SETTLE_FRAMES,
+        stable_frames: int = DEFAULT_STABLE_FRAMES,
+        max_wait_frames: int = DEFAULT_MAX_WAIT_FRAMES,
     ) -> None:
-        if max_wait_frames < 1:
+        if settle_frames < 0:
+            raise ValueError(f"settle_frames must not be negative, got {settle_frames}")
+        if stable_frames < 1:
+            raise ValueError(f"stable_frames must be at least 1, got {stable_frames}")
+        if max_wait_frames < stable_frames:
             raise ValueError(
-                f"max_wait_frames must be at least 1, got {max_wait_frames}"
+                f"max_wait_frames must be at least stable_frames ({stable_frames}), "
+                f"got {max_wait_frames}"
             )
         self._pair = pair
+        self._settle_frames = settle_frames
+        self._stable_frames = stable_frames
         self._max_wait_frames = max_wait_frames
         self._mutex = threading.Lock()
         self._shutter = threading.Lock()
@@ -133,14 +149,22 @@ class ExposureSync:
             return settings
 
     def _wait_until_applied(self, camera: Camera, settings: ExposureSettings) -> None:
+        for _ in range(self._settle_frames):
+            camera.capture_metadata()
         last: FrameMetadata | None = None
+        consecutive = 0
         for _ in range(self._max_wait_frames):
             last = camera.capture_metadata()
-            if settings.is_applied_to(last):
+            # Not a single match: a frame still under AE/AWB can coincide with the
+            # locked values and be followed by frames where AE/AWB moves them again.
+            consecutive = consecutive + 1 if settings.is_applied_to(last) else 0
+            if consecutive >= self._stable_frames:
                 return
         raise ExposureNotAppliedError(
-            f"camera {camera.camera_id} did not apply {settings} within "
-            f"{self._max_wait_frames} frames; last metadata: {last}"
+            f"camera {camera.camera_id} did not report {settings} on "
+            f"{self._stable_frames} consecutive frames within "
+            f"{self._max_wait_frames} frames after skipping {self._settle_frames}; "
+            f"last metadata: {last}"
         )
 
     def _read_left(self) -> ExposureSettings:
@@ -152,7 +176,7 @@ class ExposurePreview:
         self._sync = sync
         self._paused_poll_s = paused_poll_s
         self._state = threading.Lock()
-        self._stop = threading.Event()
+        self._stop: threading.Event | None = None
         self._thread: threading.Thread | None = None
         self._error: BaseException | None = None
 
@@ -169,23 +193,30 @@ class ExposurePreview:
     def start(self) -> None:
         with self._state:
             if self._thread is not None:
-                raise RuntimeError("exposure preview is already started")
+                raise RuntimeError(
+                    "exposure preview is already started or still stopping"
+                )
             self._sync.resume_preview()
-            self._stop.clear()
+            stop = threading.Event()
+            self._stop = stop
             self._error = None
             self._thread = threading.Thread(
-                target=self._run, name="exposure-preview", daemon=True
+                target=self._run, args=(stop,), name="exposure-preview", daemon=True
             )
             self._thread.start()
 
     def stop(self) -> None:
         with self._state:
             thread = self._thread
-            self._thread = None
+            if thread is None or self._stop is None:
+                return
             self._stop.set()
-        if thread is not None:
-            thread.join()
+        thread.join()
         with self._state:
+            if self._thread is not thread:
+                return
+            self._thread = None
+            self._stop = None
             error = self._error
             self._error = None
         if error is not None:
@@ -198,8 +229,8 @@ class ExposurePreview:
     def __exit__(self, *exc_info: object) -> None:
         self.stop()
 
-    def _run(self) -> None:
-        while not self._stop.is_set():
+    def _run(self, stop: threading.Event) -> None:
+        while not stop.is_set():
             try:
                 synced = self._sync.sync_once()
             except Exception as error:
@@ -208,4 +239,4 @@ class ExposurePreview:
                     self._error = error
                 return
             if synced is None:
-                self._stop.wait(self._paused_poll_s)
+                stop.wait(self._paused_poll_s)
