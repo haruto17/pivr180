@@ -1,0 +1,16 @@
+model = "gpt-6.1-luna"
+model_reasoning_effort = "low"
+sandbox_mode = "workspace-write"
+approval_policy = "on-request"
+
+[sandbox_workspace_write]
+network_access = true
+
+[agents]
+max_concurrent_threads_per_session = 6
+
+[analytics]
+enabled = false
+
+[feedback]
+enabled = false
