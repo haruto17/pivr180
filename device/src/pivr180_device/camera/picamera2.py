@@ -7,7 +7,17 @@ from pivr180_device.camera.base import CameraPair, Controls, FrameMetadata
 
 SENSOR_SIZE = (4056, 3040)
 FRAME_RATE = 10.0
-SYNC_FRAMES = 30
+LIBCAMERA_SYNC_PERIOD_FRAMES = 30
+SYNC_CORRECTIONS_BEFORE_READY = 2
+SYNC_CORRECTION_MARGIN_FRAMES = 10
+# Not a multiple of the sync period (e.g. 30): rpi.sync sends the server's
+# timing every LIBCAMERA_SYNC_PERIOD_FRAMES, starting at that frame, so being
+# ready on a packet frame would precede the client's frame-length correction
+# reaching the sensor.
+SYNC_FRAMES = (
+    LIBCAMERA_SYNC_PERIOD_FRAMES * SYNC_CORRECTIONS_BEFORE_READY
+    + SYNC_CORRECTION_MARGIN_FRAMES
+)
 BUFFER_COUNT = 2
 SYNC_TIMEOUT_S = 30.0
 CAPTURE_TIMEOUT_S = 5.0

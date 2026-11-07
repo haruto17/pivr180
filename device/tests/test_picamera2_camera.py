@@ -157,7 +157,7 @@ def test_start_configures_full_resolution_with_sync_server_controls():
                     "controls": {
                         "FrameRate": 10.0,
                         "SyncMode": SERVER,
-                        "SyncFrames": 30,
+                        "SyncFrames": 70,
                     },
                 }
             },
@@ -165,6 +165,21 @@ def test_start_configures_full_resolution_with_sync_server_controls():
         ("start", None),
     ]
     assert picam2.started
+
+
+def test_sync_ready_frame_comes_well_after_a_libcamera_sync_packet():
+    libcamera_sync_period_frames = 30
+    frames_for_correction_to_reach_sensor = 5
+    picam2 = StubPicamera2()
+    make_camera(picam2, is_sync_server=True).start()
+
+    sync_frames = picam2.calls[0][1]["still"]["controls"]["SyncFrames"]
+
+    assert sync_frames > libcamera_sync_period_frames
+    assert (
+        sync_frames % libcamera_sync_period_frames
+        >= frames_for_correction_to_reach_sensor
+    )
 
 
 def test_start_as_sync_client_does_not_set_sync_frames():
