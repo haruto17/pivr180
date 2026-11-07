@@ -1,7 +1,18 @@
-# Tauri + SvelteKit + TypeScript
+# pivr180 editor
 
-This template should help get you started developing with Tauri, SvelteKit and TypeScript in Vite.
+Mac 側エディタ（Tauri ＋ Svelte/TS/Vite）。
 
-## Recommended IDE Setup
+## 開発
 
-[VS Code](https://code.visualstudio.com/) + [Svelte](https://marketplace.visualstudio.com/items?itemName=svelte.svelte-vscode) + [Tauri](https://marketplace.visualstudio.com/items?itemName=tauri-apps.tauri-vscode) + [rust-analyzer](https://marketplace.visualstudio.com/items?itemName=rust-lang.rust-analyzer).
+```sh
+pnpm install
+pnpm tauri dev
+```
+
+## テスト・lint
+
+```sh
+pnpm test
+pnpm lint
+cd src-tauri && cargo test && cargo fmt --check && cargo clippy -- -D warnings
+```

@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "editor",
+  "productName": "pivr180 editor",
   "version": "0.1.0",
   "identifier": "com.haruto17.pivr180.editor",
   "build": {
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "editor",
+        "title": "pivr180 editor",
         "width": 800,
         "height": 600
       }
