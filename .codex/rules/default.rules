@@ -1,0 +1,116 @@
+##############################
+# allow
+##############################
+prefix_rule(
+    pattern = [["ls", "which", "echo", "pwd"]],
+    decision = "allow",
+)
+
+prefix_rule(
+    pattern = [["cat", "head", "tail", "wc", "rg", "grep", "tree", "stat", "file"]],
+    decision = "allow",
+)
+
+prefix_rule(
+    pattern = ["git", ["status", "diff", "log", "show", "branch", "blame", "ls-files", "rev-parse"]],
+    decision = "allow",
+)
+
+prefix_rule(
+    pattern = ["git", "remote", ["-v", "show", "get-url"]],
+    decision = "allow",
+)
+
+prefix_rule(
+    pattern = ["gh", "pr"],
+    decision = "allow",
+    match = ["gh pr create --title test --body test", "gh pr view 12", "gh pr comment 12 --body ok"],
+)
+
+prefix_rule(
+    pattern = ["gh", ["issue", "run"], ["view", "list", "status"]],
+    decision = "allow",
+)
+
+prefix_rule(
+    pattern = ["git", ["add", "commit", "push", "fetch", "pull", "checkout", "switch", "restore", "rebase", "stash", "cherry-pick", "tag"]],
+    decision = "allow",
+)
+
+##############################
+# prompt
+##############################
+prefix_rule(
+    pattern = ["git", ["merge"]],
+    decision = "prompt",
+)
+
+prefix_rule(
+    pattern = ["gh", "pr", "merge"],
+    decision = "prompt",
+    justification = "PRのマージはユーザーの確認が必要",
+    match = ["gh pr merge 12 --squash"],
+)
+
+prefix_rule(
+    pattern = ["gh", "run", ["rerun", "cancel", "delete"]],
+    decision = "prompt",
+)
+
+prefix_rule(
+    pattern = ["gh", ["api", "repo", "release", "secret", "auth", "workflow", "gist", "label"]],
+    decision = "prompt",
+)
+
+prefix_rule(
+    pattern = [["apt", "apt-get", "brew"]],
+    decision = "prompt",
+)
+
+prefix_rule(
+    pattern = [["cp", "mv", "chmod", "chown", "ln"]],
+    decision = "prompt",
+)
+
+prefix_rule(
+    pattern = [["curl", "wget", "ssh", "scp", "rsync"]],
+    decision = "prompt",
+)
+
+prefix_rule(
+    pattern = [["kill", "pkill", "killall", "xargs", "find"]],
+    decision = "prompt",
+)
+
+##############################
+# forbidden
+##############################
+prefix_rule(
+    pattern = ["git", ["reset", "clean"]],
+    decision = "forbidden",
+    justification = "作業内容が消える操作は禁止。必要ならユーザーに依頼すること",
+)
+
+prefix_rule(
+    pattern = ["git", "branch", ["-D", "--delete"]],
+    decision = "forbidden",
+    justification = "ブランチ削除はユーザーが手動で行う",
+)
+
+prefix_rule(
+    pattern = ["git", "stash", ["drop", "clear"]],
+    decision = "forbidden",
+    justification = "stashの削除はユーザーが手動で行う",
+)
+
+prefix_rule(
+    pattern = [["rm", "unlink", "rmdir", "shred", "dd", "mkfs"]],
+    decision = "forbidden",
+    justification = "ファイル削除・ディスク操作は禁止。必要ならユーザーに依頼すること",
+)
+
+prefix_rule(
+    pattern = [["sudo", "su"]],
+    decision = "forbidden",
+    justification = "管理者権限での実行は禁止",
+)
