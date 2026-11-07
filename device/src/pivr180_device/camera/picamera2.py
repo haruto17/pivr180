@@ -4,8 +4,8 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from pivr180_device.camera.base import CameraPair, Controls, FrameMetadata
+from pivr180_device.storage import STILL_SIZE
 
-SENSOR_SIZE = (4056, 3040)
 FRAME_RATE = 10.0
 LIBCAMERA_SYNC_PERIOD_FRAMES = 30
 SYNC_CORRECTIONS_BEFORE_READY = 2
@@ -24,6 +24,9 @@ CAPTURE_TIMEOUT_S = 5.0
 
 
 class _Image(Protocol):
+    @property
+    def size(self) -> tuple[int, int]: ...
+
     def save(self, fp: Path, format: str, quality: int) -> None: ...
 
 
@@ -35,6 +38,10 @@ class Picamera2Frame:
     @property
     def metadata(self) -> FrameMetadata:
         return self._metadata
+
+    @property
+    def size(self) -> tuple[int, int]:
+        return self._image.size
 
     def save(self, path: Path, quality: int) -> None:
         self._image.save(path, format="JPEG", quality=quality)
@@ -48,7 +55,7 @@ class Picamera2Camera:
         sync_mode: Any,
         *,
         is_sync_server: bool,
-        size: tuple[int, int] = SENSOR_SIZE,
+        size: tuple[int, int] = STILL_SIZE,
         frame_rate: float = FRAME_RATE,
         sync_frames: int = SYNC_FRAMES,
         sync_timeout_s: float = SYNC_TIMEOUT_S,

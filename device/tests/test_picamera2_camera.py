@@ -29,7 +29,8 @@ def make_raw_metadata(**overrides: Any) -> dict[str, Any]:
 
 
 class StubImage:
-    def __init__(self) -> None:
+    def __init__(self, size: tuple[int, int] = (4056, 3040)) -> None:
+        self.size = size
         self.saves: list[tuple[Path, str, int]] = []
 
     def save(self, fp: Path, format: str, quality: int) -> None:
@@ -275,6 +276,16 @@ def test_capture_raises_and_releases_request_on_unexpected_metadata(
         camera.capture_frame()
 
     assert request.released
+
+
+def test_frame_size_is_the_captured_image_size():
+    request = StubRequest(make_raw_metadata())
+    request.image = StubImage(size=(2028, 1520))
+    camera, _ = started_camera(request)
+
+    frame = camera.capture_frame()
+
+    assert frame.size == (2028, 1520)
 
 
 def test_frame_save_writes_jpeg_with_quality(tmp_path: Path):
