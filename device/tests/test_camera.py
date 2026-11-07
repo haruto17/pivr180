@@ -162,3 +162,34 @@ def test_camera_pair_starts_and_stops_both_cameras():
 
     pair.stop()
     assert not left.started and not right.started
+
+
+class FailingStartCamera(FakeCamera):
+    def start(self) -> None:
+        raise RuntimeError("start failed")
+
+
+class FailingStopCamera(FakeCamera):
+    def stop(self) -> None:
+        raise RuntimeError("stop failed")
+
+
+def test_camera_pair_stops_left_when_right_fails_to_start():
+    left = FakeCamera("left")
+    pair = CameraPair(left=left, right=FailingStartCamera("right"))
+
+    with pytest.raises(RuntimeError, match="start failed"):
+        pair.start()
+
+    assert not left.started
+
+
+def test_camera_pair_stops_right_when_left_fails_to_stop():
+    right = FakeCamera("right")
+    pair = CameraPair(left=FailingStopCamera("left"), right=right)
+    right.start()
+
+    with pytest.raises(RuntimeError, match="stop failed"):
+        pair.stop()
+
+    assert not right.started

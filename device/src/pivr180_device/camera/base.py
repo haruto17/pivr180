@@ -51,8 +51,14 @@ class CameraPair:
 
     def start(self) -> None:
         self.left.start()
-        self.right.start()
+        try:
+            self.right.start()
+        except BaseException:
+            self.left.stop()
+            raise
 
     def stop(self) -> None:
-        self.left.stop()
-        self.right.stop()
+        try:
+            self.left.stop()
+        finally:
+            self.right.stop()
