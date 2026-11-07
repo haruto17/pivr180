@@ -1,7 +1,8 @@
-model = "gpt-6.1-luna"
+model = "gpt-6.1-terra"
 model_reasoning_effort = "low"
 sandbox_mode = "workspace-write"
 approval_policy = "on-request"
+approvals_reviewer = "auto_review"
 
 [sandbox_workspace_write]
 network_access = true
