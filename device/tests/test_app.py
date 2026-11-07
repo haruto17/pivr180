@@ -74,9 +74,12 @@ class AutoCamera(FakeCamera):
         self.broken = threading.Event()
         self.metadata_error: Exception | None = None
         self.captured_with: list[Controls] = []
+        self.rejected_controls: Controls | None = None
 
     def set_controls(self, controls: Controls) -> None:
         with self.bus.use(f"{self.camera_id}.set_controls"):
+            if controls == self.rejected_controls:
+                raise RuntimeError(f"camera {self.camera_id} rejected {controls}")
             super().set_controls(controls)
 
     def capture_metadata(self) -> FrameMetadata:
@@ -274,6 +277,72 @@ def test_failed_capture_is_reported_and_the_next_trigger_still_shoots(
     assert "capture failed" in failure.getMessage()
     assert failure.exc_info is not None
     assert "dropped a frame" in str(failure.exc_info[1])
+
+
+def test_failed_capture_resumes_the_preview_before_the_next_trigger(
+    pair: CameraPair, left: AutoCamera, right: AutoCamera, storage: CaptureStorage
+):
+    left.failing_captures = 1
+    resumed: list[bool] = []
+
+    def triggers() -> Iterator[None]:
+        yield
+        left.auto = replace(AUTO, exposure_time_us=30_000)
+        resumed.append(left.controls["AeEnable"])
+        resumed.append(wait_for(lambda: right_has_copied(right, left.auto)))
+        yield
+
+    run(pair, storage, triggers())
+
+    assert resumed == [True, True]
+    assert len(captures(storage)) == 1
+
+
+def test_stops_with_an_error_when_the_preview_cannot_be_resumed_after_a_shot(
+    pair: CameraPair, left: AutoCamera, right: AutoCamera, storage: CaptureStorage
+):
+    shots_after_failure: list[None] = []
+
+    def triggers() -> Iterator[None]:
+        right.rejected_controls = Controls(AeEnable=False, AwbEnable=False)
+        yield
+        shots_after_failure.append(None)
+        yield
+
+    with pytest.raises(RuntimeError, match="camera right rejected"):
+        run(pair, storage, triggers())
+
+    assert shots_after_failure == []
+    assert len(captures(storage)) == 1
+    assert not left.started
+    assert not right.started
+    assert preview_threads() == []
+
+
+def test_main_exits_with_failure_when_the_preview_cannot_be_resumed(
+    pair: CameraPair, left: AutoCamera, right: AutoCamera, tmp_path: Path
+):
+    open_pair = OpenPairRecorder(pair)
+
+    class RejectingResumeStdin(io.StringIO):
+        def __iter__(self) -> Iterator[str]:
+            # Not set before main(): ExposurePreview.start() resumes the preview too.
+            right.rejected_controls = Controls(AeEnable=False, AwbEnable=False)
+            yield "\n"
+            yield "\n"
+
+    code = main(
+        ["--captures-dir", str(tmp_path / "captures")],
+        open_pair=open_pair,
+        stdin=RejectingResumeStdin(),
+    )
+
+    assert code == EXIT_ERROR
+    assert len(list((tmp_path / "captures").iterdir())) == 1
+    assert open_pair.closed
+    assert not left.started
+    assert not right.started
+    assert preview_threads() == []
 
 
 def test_failed_save_is_reported_and_cameras_are_still_released(

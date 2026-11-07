@@ -58,6 +58,10 @@ def run(pair: CameraPair, storage: CaptureStorage, triggers: Iterable[object]) -
                 try:
                     directory, synced = shoot(pair, exposure, storage)
                 except Exception:
+                    # Not continuing while still locked: a failed resume leaves
+                    # sync_once a no-op, so left AE/AWB and the copy would not run.
+                    if exposure.locked_settings is not None:
+                        raise
                     logger.exception("capture failed; back to preview")
                     continue
                 if synced.warning:
