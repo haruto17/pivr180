@@ -3,8 +3,35 @@
 ## Code Review Rules
 
 When reviewing pull requests, make sure to check each of the following items. If there are any violations, point them out in a review comment following the specified format.  
-For each issue, describe a concrete scenario (input, state, or sequence of events) in which the problem occurs. Do not report speculative issues without a plausible failure scenario.  
-If no issues are found, or only `nit`-level issues are found, comment "LGTM" and approve the pull request.
+For each issue, describe a concrete scenario (input, state, or sequence of events) in which the problem occurs. Do not report speculative issues without a plausible failure scenario.
+
+### Review procedure
+
+1. Skip the PR if there are no new commits since your last "Review completed by Codex" comment.
+2. Read the replies to your previous review comments. Do not report the same issue again if it was fixed, or if the reply gives a valid reason for not fixing it.
+3. Post each issue as a review comment on the relevant line, following the format below.
+4. When the review is complete, always post a PR comment in the following format, whether or not issues were found:
+
+```
+Review completed by Codex
+commit: <SHA of the reviewed head commit>
+result: <result>
+critical: <count>, error: <count>, warning: <count>, nit: <count>
+deferred warnings: <links to follow-up issues, or "None">
+```
+
+Do not include deferred warnings in the `warning` count.
+
+A `warning` is deferred only if the reply to its review comment states the reason for deferring and links to a follow-up issue that exists. Otherwise, count it as an unresolved `warning`.
+
+Set `result` as follows:
+
+- If there are no `critical`, `error`, or unresolved `warning` issues (only `nit` issues or deferred warnings remain, or none at all): `LGTM by Codex`
+- Otherwise: `Changes requested`
+
+Do not write "LGTM by Codex" anywhere in the comment unless the result is LGTM.
+
+### Review comment format
 
 ```
 summary: <summary>

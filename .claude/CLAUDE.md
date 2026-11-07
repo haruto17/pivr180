@@ -17,14 +17,16 @@ Each team consists of two members:
 - **Implementer**: implements, self-reviews, creates the PR, applies fixes, and merges
 - **Reviewer**: monitors the PR on GitHub and reports to the Implementer
 
+Separately from the teams, Codex CLI periodically reviews open PRs. It posts review comments on issues it finds, and comments "LGTM by Codex" when it finds no issues. Codex CLI is not a team member.
+
 ### Flow
 
 1. Implementer: implement → self-review → push → create PR
-2. Once the PR is created, Codex review runs automatically on GitHub
-3. Reviewer: check the PR every 10 minutes for Codex review comments and approval status
+2. Codex CLI reviews the PR periodically
+3. Reviewer: check the PR every 10 minutes for Codex review comments and the "LGTM by Codex" comment
 4. If review comments are found, Reviewer reports them to Implementer
    - Implementer: fix → self-review → push, then return to step 3
-5. If the PR is approved, Reviewer reports it to Implementer
+5. If "LGTM by Codex" is found, Reviewer instructs Implementer to merge
    - Implementer: merge the PR
 6. After the merge, the team disbands
 
@@ -32,7 +34,8 @@ Each team consists of two members:
 
 - Each team works on its own branch in a separate git worktree
 - Do not push after each commit; push only once all implementation (or all fixes for a review round) is complete
-- Repeat the review → fix cycle until the PR is approved
+- Repeat the review → fix cycle until "LGTM by Codex" is posted
+- Only treat "LGTM by Codex" as valid if it was posted after the latest push
 - If the branch falls behind main after another team merges, merge main into the branch (do not rebase, since force-pushing is not allowed)
 - If a review comment requires the owner's decision (e.g. spec changes, scope changes, design decisions that would need an ADR), stop, mention the owner with "@haruto17" in a PR comment, and wait for the owner's instructions
 - If no Codex review appears after 1 hour, stop, mention the owner with "@haruto17" in a PR comment, and wait for the owner's instructions

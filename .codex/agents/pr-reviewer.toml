@@ -1,0 +1,5 @@
+name = "pr-reviewer"
+description = "Reviews exactly one pull request according to AGENTS.md and posts the results to GitHub."
+model = "gpt-6.1-terra"
+model_reasoning_effort = "high"
+developer_instructions = "Please review the specified Pull Request in accordance with the code review rules in AGENTS.md."
