@@ -23,6 +23,9 @@ class Frame(Protocol):
     @property
     def metadata(self) -> FrameMetadata: ...
 
+    @property
+    def size(self) -> tuple[int, int]: ...
+
     def save(self, path: Path, quality: int) -> None: ...
 
 
