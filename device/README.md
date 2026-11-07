@@ -46,6 +46,8 @@ OS の Python のバージョンが変わったときなどに `uv sync` が ven
 - 左カメラを libcamera のカメラ同期のサーバー、右カメラをクライアントにする（`SyncMode`）。
 - 左右とも 4056×3040、10fps に固定して開始する。
 - 開始後最初のフレームは、左右の同期が取れる（`SyncReady`）まで待ってから返す。
+  - サーバーは 30 フレームごと（libcamera `rpi.sync` の既定）にタイミングをクライアントへ送り、クライアントはそれを受けてフレーム長を補正する。
+  - `SyncReady` はサーバーの開始から 70 フレーム後（10fps で約 7 秒）とし、2 回目の通知（60 フレーム目）による補正がセンサーに反映されるまでの余裕を 10 フレーム取っている。
 
 ```python
 from pivr180_device.camera.picamera2 import open_camera_pair
