@@ -5,6 +5,9 @@ description = "pivr180 device software for Raspberry Pi 5"
 requires-python = ">=3.11"
 dependencies = []
 
+[project.scripts]
+pivr180-capture = "pivr180_device.app:main"
+
 [build-system]
 requires = ["uv_build>=0.13.7,<0.14.0"]
 build-backend = "uv_build"
