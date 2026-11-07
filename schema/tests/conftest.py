@@ -25,3 +25,15 @@ def meta_schema() -> dict[str, Any]:
 @pytest.fixture(scope="session")
 def meta_validator(meta_schema: dict[str, Any]) -> Draft202012Validator:
     return Draft202012Validator(meta_schema)
+
+
+@pytest.fixture(scope="session")
+def correction_schema() -> dict[str, Any]:
+    return load_json(SCHEMA_DIR / "correction.schema.json")
+
+
+@pytest.fixture(scope="session")
+def correction_validator(
+    correction_schema: dict[str, Any],
+) -> Draft202012Validator:
+    return Draft202012Validator(correction_schema)
