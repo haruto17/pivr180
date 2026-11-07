@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "scope": "device_default",
+  "cameras": {
+    "left": {
+      "center_x_px": 2028,
+      "center_y_px": 1520,
+      "radius_px": 1469.5,
+      "rotation_deg": 0
+    },
+    "right": {
+      "center_x_px": 2028,
+      "center_y_px": 1520,
+      "radius_px": 1469.5,
+      "rotation_deg": 0
+    }
+  }
+}

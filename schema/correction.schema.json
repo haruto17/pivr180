@@ -1,0 +1,68 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/haruto17/pivr180/schema/correction.schema.json",
+  "title": "pivr180 image circle correction",
+  "description": "Image circle correction values saved by editor. A device default applies to every capture; a capture override replaces the default per camera.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "scope", "cameras"],
+  "properties": {
+    "schema_version": {
+      "description": "Version of this schema the file conforms to.",
+      "const": 1
+    },
+    "scope": {
+      "description": "device_default applies to all captures; capture_override applies to a single capture.",
+      "enum": ["device_default", "capture_override"]
+    },
+    "cameras": {
+      "description": "Correction per camera. In a capture override, each present camera replaces the device default for that camera.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "left": { "$ref": "#/$defs/image_circle" },
+        "right": { "$ref": "#/$defs/image_circle" }
+      }
+    }
+  },
+  "if": {
+    "properties": { "scope": { "const": "device_default" } }
+  },
+  "then": {
+    "properties": { "cameras": { "required": ["left", "right"] } }
+  },
+  "else": {
+    "properties": { "cameras": { "minProperties": 1 } }
+  },
+  "$defs": {
+    "image_circle": {
+      "description": "Fisheye image circle in the full-resolution source image, with the origin at the top-left pixel.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["center_x_px", "center_y_px", "radius_px", "rotation_deg"],
+      "properties": {
+        "center_x_px": {
+          "description": "Horizontal position of the circle center in pixels.",
+          "type": "number",
+          "minimum": 0
+        },
+        "center_y_px": {
+          "description": "Vertical position of the circle center in pixels.",
+          "type": "number",
+          "minimum": 0
+        },
+        "radius_px": {
+          "description": "Radius of the circle corresponding to a 180 degree field of view, in pixels.",
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "rotation_deg": {
+          "description": "Rotation around the circle center in degrees, positive clockwise as displayed.",
+          "type": "number",
+          "exclusiveMinimum": -180,
+          "maximum": 180
+        }
+      }
+    }
+  }
+}
