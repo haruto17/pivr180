@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "scope": "capture_override",
+  "cameras": {
+    "left": {
+      "center_x_px": 2035.5,
+      "center_y_px": 1512.25,
+      "radius_px": 1472,
+      "rotation_deg": -0.8
+    },
+    "right": {
+      "center_x_px": 2019,
+      "center_y_px": 1527.75,
+      "radius_px": 1466.5,
+      "rotation_deg": 1.2
+    }
+  }
+}
