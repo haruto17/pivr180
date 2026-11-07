@@ -3,7 +3,8 @@
 ## Code Review Rules
 
 When reviewing pull requests, make sure to check each of the following items. If there are any violations, point them out in a review comment following the specified format.  
-For each issue, describe a concrete scenario (input, state, or sequence of events) in which the problem occurs. Do not report speculative issues without a plausible failure scenario.
+For each issue, describe a concrete scenario (input, state, or sequence of events) in which the problem occurs. Do not report speculative issues without a plausible failure scenario.  
+If no issues are found, or only `nit`-level issues are found, comment "LGTM" and approve the pull request.
 
 ```
 summary: <summary>
