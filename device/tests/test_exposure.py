@@ -1,11 +1,40 @@
+import logging
 import math
 import threading
+import time
+from collections.abc import Callable
 
 import pytest
 
 from pivr180_device.camera import CameraPair, Controls, FrameMetadata
 from pivr180_device.camera.fake import FakeCamera, FakeFrame
-from pivr180_device.exposure import ExposureSettings, ExposureSync
+from pivr180_device.exposure import (
+    ExposureNotAppliedError,
+    ExposurePreview,
+    ExposureSettings,
+    ExposureSync,
+)
+
+LOCKED_CONTROLS = {
+    "AeEnable": False,
+    "AwbEnable": False,
+    "ExposureTime": 10_000,
+    "AnalogueGain": 1.0,
+    "ColourGains": (2.0, 1.5),
+}
+
+
+def make_metadata(
+    exposure_time_us: int = 10_000,
+    analogue_gain: float = 1.0,
+    colour_gains: tuple[float, float] = (2.0, 1.5),
+) -> FrameMetadata:
+    return FrameMetadata(
+        sensor_timestamp_ns=0,
+        exposure_time_us=exposure_time_us,
+        analogue_gain=analogue_gain,
+        colour_gains=colour_gains,
+    )
 
 
 def make_frame(
@@ -13,27 +42,53 @@ def make_frame(
     analogue_gain: float = 1.0,
     colour_gains: tuple[float, float] = (2.0, 1.5),
 ) -> FakeFrame:
-    return FakeFrame(
-        FrameMetadata(
-            sensor_timestamp_ns=0,
-            exposure_time_us=exposure_time_us,
-            analogue_gain=analogue_gain,
-            colour_gains=colour_gains,
-        )
-    )
+    return FakeFrame(make_metadata(exposure_time_us, analogue_gain, colour_gains))
 
 
-def make_sync(*left_frames: FakeFrame) -> tuple[ExposureSync, FakeCamera, FakeCamera]:
-    left = FakeCamera("left", frames=left_frames)
-    right = FakeCamera("right")
+def make_sync(
+    left_frames: list[FakeFrame] | None = None,
+    right_frames: list[FakeFrame] | None = None,
+    max_wait_frames: int = 30,
+) -> tuple[ExposureSync, FakeCamera, FakeCamera]:
+    left = FakeCamera("left", frames=left_frames or [])
+    right = FakeCamera("right", frames=right_frames or [])
     pair = CameraPair(left=left, right=right)
     pair.start()
-    return ExposureSync(pair), left, right
+    return ExposureSync(pair, max_wait_frames=max_wait_frames), left, right
 
 
-class FailingSetControlsCamera(FakeCamera):
-    def set_controls(self, controls: Controls) -> None:
-        raise RuntimeError("set_controls failed")
+def wait_for(predicate: Callable[[], bool], timeout_s: float = 5.0) -> bool:
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        if predicate():
+            return True
+        time.sleep(0.001)
+    return predicate()
+
+
+class ControlledCamera(FakeCamera):
+    def __init__(self, camera_id: str, auto: FrameMetadata) -> None:
+        super().__init__(camera_id)
+        self.auto = auto
+
+    def capture_metadata(self) -> FrameMetadata:
+        if not self.started:
+            raise RuntimeError(f"camera {self.camera_id} is not started")
+        time.sleep(0.001)
+        controls = self.controls
+        auto = self.auto
+        return FrameMetadata(
+            sensor_timestamp_ns=0,
+            exposure_time_us=auto.exposure_time_us
+            if controls.get("AeEnable", True)
+            else controls["ExposureTime"],
+            analogue_gain=auto.analogue_gain
+            if controls.get("AeEnable", True)
+            else controls["AnalogueGain"],
+            colour_gains=auto.colour_gains
+            if controls.get("AwbEnable", True)
+            else controls["ColourGains"],
+        )
 
 
 def test_resume_preview_enables_auto_on_left_and_disables_it_on_right():
@@ -47,7 +102,11 @@ def test_resume_preview_enables_auto_on_left_and_disables_it_on_right():
 
 def test_sync_once_copies_left_values_to_right_without_touching_left():
     sync, left, right = make_sync(
-        make_frame(exposure_time_us=33_333, analogue_gain=4.5, colour_gains=(1.8, 2.2))
+        [
+            make_frame(
+                exposure_time_us=33_333, analogue_gain=4.5, colour_gains=(1.8, 2.2)
+            )
+        ]
     )
     sync.resume_preview()
 
@@ -66,8 +125,10 @@ def test_sync_once_copies_left_values_to_right_without_touching_left():
 
 def test_sync_once_follows_changes_in_left_values():
     sync, _, right = make_sync(
-        make_frame(exposure_time_us=10_000, analogue_gain=1.0),
-        make_frame(exposure_time_us=20_000, analogue_gain=2.0),
+        [
+            make_frame(exposure_time_us=10_000, analogue_gain=1.0),
+            make_frame(exposure_time_us=20_000, analogue_gain=2.0),
+        ]
     )
 
     sync.sync_once()
@@ -75,124 +136,6 @@ def test_sync_once_follows_changes_in_left_values():
 
     assert right.controls["ExposureTime"] == 20_000
     assert right.controls["AnalogueGain"] == 2.0
-
-
-def test_lock_sets_identical_manual_values_on_both_cameras():
-    sync, left, right = make_sync(
-        make_frame(exposure_time_us=25_000, analogue_gain=3.0, colour_gains=(1.9, 1.6))
-    )
-    sync.resume_preview()
-
-    settings = sync.lock()
-
-    expected = {
-        "AeEnable": False,
-        "AwbEnable": False,
-        "ExposureTime": 25_000,
-        "AnalogueGain": 3.0,
-        "ColourGains": (1.9, 1.6),
-    }
-    assert settings == ExposureSettings(25_000, 3.0, (1.9, 1.6))
-    assert left.controls == expected
-    assert right.controls == expected
-    assert sync.locked_settings == settings
-
-
-def test_sync_once_does_nothing_while_locked():
-    sync, left, right = make_sync(make_frame(), make_frame(exposure_time_us=99_999))
-    sync.lock()
-    right_history = list(right.controls_history)
-
-    assert sync.sync_once() is None
-    assert right.controls_history == right_history
-    assert left.capture_metadata().exposure_time_us == 99_999
-
-
-def test_lock_while_locked_keeps_the_first_values():
-    sync, left, _ = make_sync(
-        make_frame(exposure_time_us=10_000), make_frame(exposure_time_us=99_999)
-    )
-
-    first = sync.lock()
-    second = sync.lock()
-
-    assert second == first
-    assert left.capture_metadata().exposure_time_us == 99_999
-
-
-def test_resume_preview_after_lock_restarts_copying():
-    sync, left, right = make_sync(
-        make_frame(exposure_time_us=10_000), make_frame(exposure_time_us=20_000)
-    )
-    sync.lock()
-
-    sync.resume_preview()
-    settings = sync.sync_once()
-
-    assert sync.locked_settings is None
-    assert left.controls["AeEnable"] is True
-    assert left.controls["AwbEnable"] is True
-    assert settings is not None
-    assert right.controls["ExposureTime"] == 20_000
-
-
-def test_locked_context_resumes_preview_on_exit():
-    sync, left, _ = make_sync(make_frame())
-
-    with sync.locked() as settings:
-        assert sync.locked_settings == settings
-        assert left.controls["AeEnable"] is False
-
-    assert sync.locked_settings is None
-    assert left.controls["AeEnable"] is True
-
-
-def test_locked_context_resumes_preview_when_body_raises():
-    sync, left, _ = make_sync(make_frame())
-
-    with pytest.raises(RuntimeError, match="capture failed"), sync.locked():
-        raise RuntimeError("capture failed")
-
-    assert sync.locked_settings is None
-    assert left.controls["AeEnable"] is True
-
-
-def test_locked_context_keeps_an_outer_lock():
-    sync, _, _ = make_sync(make_frame())
-    outer = sync.lock()
-
-    with sync.locked() as settings:
-        assert settings == outer
-
-    assert sync.locked_settings == outer
-
-
-def test_lock_stays_unlocked_when_left_set_controls_fails():
-    left = FailingSetControlsCamera("left", frames=[make_frame()])
-    right = FakeCamera("right")
-    pair = CameraPair(left=left, right=right)
-    pair.start()
-    sync = ExposureSync(pair)
-
-    with pytest.raises(RuntimeError, match="set_controls failed"):
-        sync.lock()
-
-    assert sync.locked_settings is None
-
-
-def test_resume_preview_stays_locked_when_left_set_controls_fails():
-    sync, left, _ = make_sync(make_frame())
-    settings = sync.lock()
-
-    def fail(controls: Controls) -> None:
-        raise RuntimeError("set_controls failed")
-
-    left.set_controls = fail
-
-    with pytest.raises(RuntimeError, match="set_controls failed"):
-        sync.resume_preview()
-
-    assert sync.locked_settings == settings
 
 
 def test_sync_once_propagates_capture_errors_without_setting_right():
@@ -221,7 +164,7 @@ def test_sync_once_rejects_invalid_left_values(
     exposure_time_us: int, analogue_gain: float, colour_gains: tuple[float, float]
 ):
     sync, _, right = make_sync(
-        make_frame(exposure_time_us, analogue_gain, colour_gains)
+        [make_frame(exposure_time_us, analogue_gain, colour_gains)]
     )
 
     with pytest.raises(ValueError):
@@ -230,15 +173,174 @@ def test_sync_once_rejects_invalid_left_values(
     assert right.controls_history == []
 
 
-def test_lock_rejects_invalid_left_values_and_stays_unlocked():
-    sync, left, right = make_sync(make_frame(exposure_time_us=0))
+def test_sync_rejects_non_positive_max_wait_frames():
+    pair = CameraPair(left=FakeCamera("left"), right=FakeCamera("right"))
+
+    with pytest.raises(ValueError, match="max_wait_frames"):
+        ExposureSync(pair, max_wait_frames=0)
+
+
+def test_shoot_locks_both_cameras_to_left_values_during_capture():
+    sync, left, right = make_sync([make_frame(), make_frame()], [make_frame()])
+    seen: list[tuple[ExposureSettings, Controls, Controls]] = []
+
+    def capture(settings: ExposureSettings) -> str:
+        seen.append((settings, left.controls, right.controls))
+        return "captured"
+
+    result = sync.shoot(capture)
+
+    assert result == "captured"
+    assert seen == [
+        (ExposureSettings(10_000, 1.0, (2.0, 1.5)), LOCKED_CONTROLS, LOCKED_CONTROLS)
+    ]
+
+
+def test_shoot_resumes_preview_after_capture():
+    sync, left, right = make_sync([make_frame(), make_frame()], [make_frame()])
+
+    sync.shoot(lambda settings: None)
+
+    assert sync.locked_settings is None
+    assert left.controls["AeEnable"] is True
+    assert left.controls["AwbEnable"] is True
+    assert right.controls["AeEnable"] is False
+    assert right.controls["AwbEnable"] is False
+
+
+def test_sync_once_does_nothing_during_shoot():
+    sync, _, right = make_sync([make_frame(), make_frame()], [make_frame()])
+    results: list[ExposureSettings | None] = []
+    history_lengths: list[tuple[int, int]] = []
+
+    def capture(settings: ExposureSettings) -> None:
+        before = len(right.controls_history)
+        results.append(sync.sync_once())
+        history_lengths.append((before, len(right.controls_history)))
+
+    sync.shoot(capture)
+
+    assert results == [None]
+    assert history_lengths[0][0] == history_lengths[0][1]
+
+
+def test_shoot_waits_until_delayed_controls_are_reported():
+    old = make_frame(
+        exposure_time_us=40_000, analogue_gain=8.0, colour_gains=(1.0, 1.0)
+    )
+    marker = make_frame(exposure_time_us=10_000, analogue_gain=1.0)
+    sync, left, right = make_sync(
+        [make_frame(), old, old, make_frame()],
+        [old, old, old, make_frame(), marker],
+    )
+
+    captured = sync.shoot(lambda settings: right.capture_frame())
+
+    assert captured is marker
+    with pytest.raises(RuntimeError, match="no scripted frames"):
+        left.capture_metadata()
+
+
+def test_shoot_accepts_values_rounded_by_the_driver():
+    sync, _, _ = make_sync(
+        [make_frame(), make_frame(exposure_time_us=9_998, analogue_gain=1.003)],
+        [make_frame(exposure_time_us=10_004, colour_gains=(2.01, 1.49))],
+        max_wait_frames=1,
+    )
+
+    assert sync.shoot(lambda settings: "captured") == "captured"
+
+
+def test_shoot_raises_and_resumes_preview_when_controls_are_never_applied():
+    old = make_frame(exposure_time_us=40_000)
+    sync, left, _ = make_sync(
+        [make_frame(), make_frame()], [old, old, old], max_wait_frames=3
+    )
+    calls: list[ExposureSettings] = []
+
+    with pytest.raises(ExposureNotAppliedError, match="camera right .* 3 frames"):
+        sync.shoot(calls.append)
+
+    assert calls == []
+    assert sync.locked_settings is None
+    assert left.controls["AeEnable"] is True
+
+
+def test_shoot_resumes_preview_when_capture_raises():
+    sync, left, _ = make_sync([make_frame(), make_frame()], [make_frame()])
+
+    def capture(settings: ExposureSettings) -> None:
+        raise RuntimeError("capture failed")
+
+    with pytest.raises(RuntimeError, match="capture failed"):
+        sync.shoot(capture)
+
+    assert sync.locked_settings is None
+    assert left.controls["AeEnable"] is True
+
+
+class FailingSetControlsCamera(FakeCamera):
+    def set_controls(self, controls: Controls) -> None:
+        raise RuntimeError("set_controls failed")
+
+
+def test_shoot_stays_unlocked_when_left_set_controls_fails():
+    left = FailingSetControlsCamera("left", frames=[make_frame()])
+    pair = CameraPair(left=left, right=FakeCamera("right"))
+    pair.start()
+    sync = ExposureSync(pair)
+    calls: list[ExposureSettings] = []
+
+    with pytest.raises(RuntimeError, match="set_controls failed"):
+        sync.shoot(calls.append)
+
+    assert calls == []
+    assert sync.locked_settings is None
+
+
+def test_shoot_rejects_invalid_left_values_without_changing_controls():
+    sync, left, right = make_sync([make_frame(exposure_time_us=0)])
 
     with pytest.raises(ValueError, match="exposure_time_us"):
-        sync.lock()
+        sync.shoot(lambda settings: None)
 
     assert sync.locked_settings is None
     assert left.controls_history == []
     assert right.controls_history == []
+
+
+def test_overlapping_shoots_do_not_resume_preview_mid_capture():
+    sync, left, _ = make_sync(
+        [make_frame(), make_frame(), make_frame(), make_frame()],
+        [make_frame(), make_frame()],
+    )
+    first_entered = threading.Event()
+    release_first = threading.Event()
+    events: list[str] = []
+
+    def first_capture(settings: ExposureSettings) -> None:
+        events.append("first start")
+        first_entered.set()
+        release_first.wait(timeout=5)
+        events.append("first end")
+
+    def second_capture(settings: ExposureSettings) -> None:
+        events.append(f"second start, AeEnable={left.controls['AeEnable']}")
+
+    first = threading.Thread(target=sync.shoot, args=(first_capture,))
+    first.start()
+    assert first_entered.wait(timeout=5)
+    second = threading.Thread(target=sync.shoot, args=(second_capture,))
+    second.start()
+    second.join(timeout=0.2)
+    events_while_first_runs = list(events)
+    release_first.set()
+    first.join(timeout=5)
+    second.join(timeout=5)
+
+    assert events_while_first_runs == ["first start"]
+    assert events == ["first start", "first end", "second start, AeEnable=False"]
+    assert left.controls["AeEnable"] is True
 
 
 class BlockingFirstCaptureCamera(FakeCamera):
@@ -256,30 +358,125 @@ class BlockingFirstCaptureCamera(FakeCamera):
         return super().capture_metadata()
 
 
-def test_lock_during_sync_once_is_not_overwritten_by_the_in_flight_sync():
+def test_shoot_during_sync_once_is_not_overwritten_by_the_in_flight_sync():
     left = BlockingFirstCaptureCamera(
         "left",
         frames=[
             make_frame(exposure_time_us=10_000),
             make_frame(exposure_time_us=20_000),
+            make_frame(exposure_time_us=20_000),
         ],
     )
-    right = FakeCamera("right")
+    right = FakeCamera("right", frames=[make_frame(exposure_time_us=20_000)])
     pair = CameraPair(left=left, right=right)
     pair.start()
     sync = ExposureSync(pair)
-    results: list[ExposureSettings] = []
+    right_during_capture: list[Controls] = []
 
     syncing = threading.Thread(target=sync.sync_once)
     syncing.start()
     assert left.entered.wait(timeout=5)
-    locking = threading.Thread(target=lambda: results.append(sync.lock()))
-    locking.start()
-    locking.join(timeout=0.2)
+    shooting = threading.Thread(
+        target=sync.shoot,
+        args=(lambda settings: right_during_capture.append(right.controls),),
+    )
+    shooting.start()
+    shooting.join(timeout=0.2)
     left.release.set()
     syncing.join(timeout=5)
-    locking.join(timeout=5)
+    shooting.join(timeout=5)
 
-    assert results == [ExposureSettings(20_000, 1.0, (2.0, 1.5))]
-    assert right.controls["ExposureTime"] == 20_000
-    assert left.controls == right.controls
+    assert right_during_capture == [{**LOCKED_CONTROLS, "ExposureTime": 20_000}]
+
+
+def make_preview_pair(
+    auto: FrameMetadata,
+) -> tuple[ExposureSync, ControlledCamera, ControlledCamera]:
+    left = ControlledCamera("left", auto)
+    right = ControlledCamera("right", make_metadata(exposure_time_us=1))
+    pair = CameraPair(left=left, right=right)
+    pair.start()
+    return ExposureSync(pair), left, right
+
+
+def test_preview_keeps_copying_left_values_to_right_until_stopped():
+    sync, left, right = make_preview_pair(make_metadata(exposure_time_us=10_000))
+    preview = ExposurePreview(sync)
+
+    preview.start()
+    try:
+        assert left.controls["AeEnable"] is True
+        assert wait_for(lambda: right.controls.get("ExposureTime") == 10_000)
+        left.auto = make_metadata(exposure_time_us=20_000, colour_gains=(1.7, 1.9))
+        assert wait_for(lambda: right.controls.get("ExposureTime") == 20_000)
+        assert right.controls["ColourGains"] == (1.7, 1.9)
+    finally:
+        preview.stop()
+
+    assert not preview.running
+    history_length = len(right.controls_history)
+    left.auto = make_metadata(exposure_time_us=30_000)
+    time.sleep(0.02)
+    assert len(right.controls_history) == history_length
+
+
+def test_shoot_while_preview_runs_locks_and_then_resumes_copying():
+    sync, left, right = make_preview_pair(make_metadata(exposure_time_us=15_000))
+
+    with ExposurePreview(sync) as preview:
+        assert wait_for(lambda: right.controls.get("ExposureTime") == 15_000)
+        settings = sync.shoot(lambda settings: settings)
+        left.auto = make_metadata(exposure_time_us=25_000)
+        assert wait_for(lambda: right.controls.get("ExposureTime") == 25_000)
+        assert preview.running
+
+    assert settings == ExposureSettings(15_000, 1.0, (2.0, 1.5))
+    assert left.controls["AeEnable"] is True
+
+
+def test_preview_stops_and_reports_sync_errors(caplog: pytest.LogCaptureFixture):
+    sync, _, _ = make_sync()
+    preview = ExposurePreview(sync)
+
+    with caplog.at_level(logging.ERROR, logger="pivr180_device.exposure"):
+        preview.start()
+        assert wait_for(lambda: not preview.running)
+
+    assert isinstance(preview.error, RuntimeError)
+    assert "exposure preview sync failed" in caplog.text
+    with pytest.raises(RuntimeError, match="stopped on error") as excinfo:
+        preview.stop()
+    assert isinstance(excinfo.value.__cause__, RuntimeError)
+    assert preview.error is None
+
+
+def test_preview_cannot_be_started_twice():
+    sync, _, _ = make_preview_pair(make_metadata())
+    preview = ExposurePreview(sync)
+
+    preview.start()
+    try:
+        with pytest.raises(RuntimeError, match="already started"):
+            preview.start()
+    finally:
+        preview.stop()
+
+
+def test_preview_can_be_restarted_after_stop():
+    sync, _, right = make_preview_pair(make_metadata(exposure_time_us=12_000))
+    preview = ExposurePreview(sync)
+
+    preview.start()
+    preview.stop()
+    preview.start()
+    try:
+        assert preview.running
+        assert wait_for(lambda: right.controls.get("ExposureTime") == 12_000)
+    finally:
+        preview.stop()
+
+
+def test_stop_without_start_is_a_no_op():
+    sync, _, _ = make_sync()
+
+    ExposurePreview(sync).stop()
