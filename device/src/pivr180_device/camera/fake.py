@@ -10,6 +10,7 @@ from pivr180_device.camera.base import Controls, FrameMetadata
 class FakeFrame:
     metadata: FrameMetadata
     image: bytes = b""
+    size: tuple[int, int] = (4056, 3040)
     saves: list[tuple[Path, int]] = field(default_factory=list)
 
     def save(self, path: Path, quality: int) -> None:
