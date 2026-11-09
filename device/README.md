@@ -34,10 +34,10 @@ Picamera2 と libcamera の Python バインディングは apt の OS パッケ
    スクリプトは次のことを行う。
 
    - `uv venv --clear --system-site-packages --python /usr/bin/python3` で venv を作り直す。`python3-picamera2` は OS の Python 向けにビルドされているため、uv が管理する Python ではなく `/usr/bin/python3` を使う。
-   - `uv sync` で依存関係をインストールする。
+   - `uv sync --python /usr/bin/python3` で依存関係をインストールする。
    - venv から `picamera2` と `libcamera` を import できることを確認する。
 
-OS の Python のバージョンが変わったときなどに `uv sync` が venv を作り直すと、`--system-site-packages` が外れて picamera2 を import できなくなる。その場合はスクリプトを再実行する。
+Pi では `uv run` や `--python` なしの `uv sync` を使わず、`.venv/bin/` のコマンドを直接実行する。`device/.python-version` は Mac の開発用に 3.11 を指定しているため、OS の Python が 3.11 以外だと、uv が venv を 3.11 で作り直す。すると `--system-site-packages` が外れて picamera2 を import できなくなる。その場合や OS の Python のバージョンが変わったときは、スクリプトを再実行する。
 
 ## カメラ
 
@@ -77,7 +77,7 @@ with open_camera_pair(left_index=0, right_index=1) as pair:
 2. `device/` で起動する。
 
    ```sh
-   uv run pivr180-capture
+   .venv/bin/pivr180-capture
    ```
 
    | オプション | 既定値 | 内容 |
@@ -104,7 +104,7 @@ with open_camera_pair(left_index=0, right_index=1) as pair:
 保存した meta.json は、次のコマンドで schema に適合するか確認できる。
 
 ```sh
-uv run python -c '
+.venv/bin/python -c '
 import json, sys
 from jsonschema import Draft202012Validator
 schema = json.load(open("../schema/meta.schema.json"))
