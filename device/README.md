@@ -34,10 +34,12 @@ Picamera2 と libcamera の Python バインディングは apt の OS パッケ
    スクリプトは次のことを行う。
 
    - `uv venv --clear --system-site-packages --python /usr/bin/python3` で venv を作り直す。`python3-picamera2` は OS の Python 向けにビルドされているため、uv が管理する Python ではなく `/usr/bin/python3` を使う。
-   - `uv sync` で依存関係をインストールする。
+   - `uv sync --python /usr/bin/python3` で依存関係をインストールする。
    - venv から `picamera2` と `libcamera` を import できることを確認する。
 
-OS の Python のバージョンが変わったときなどに `uv sync` が venv を作り直すと、`--system-site-packages` が外れて picamera2 を import できなくなる。その場合はスクリプトを再実行する。
+`device/.python-version` は Pi の OS の Python に合わせて 3.13 を指定している。Mac の開発も同じ 3.13 で行う。
+
+OS の Python が 3.13 でなくなると、`uv run` や `uv sync` が venv を `.python-version` のバージョンで作り直す。すると `--system-site-packages` が外れて picamera2 を import できなくなる。その場合は `device/.python-version` を OS の Python のバージョン（`/usr/bin/python3 --version`）に変更してから、スクリプトを再実行する。
 
 ## カメラ
 
