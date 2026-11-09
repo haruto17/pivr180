@@ -6,6 +6,8 @@ from pathlib import Path
 DEVICE_DIR = Path(__file__).resolve().parents[1]
 SETUP_SCRIPT = DEVICE_DIR / "scripts" / "setup_pi_venv.sh"
 README = DEVICE_DIR / "README.md"
+PYTHON_VERSION_FILE = DEVICE_DIR / ".python-version"
+SUPPORTED_PI_PYTHON = "3.13"
 
 
 def write_recording_stub(path: Path, name: str) -> None:
@@ -54,8 +56,22 @@ def test_setup_verifies_picamera2_without_uv_run(tmp_path):
     assert "import picamera2" in calls[2]
 
 
-def test_readme_starts_capture_without_uv_run():
+def test_python_version_file_matches_supported_pi_python():
+    pinned = PYTHON_VERSION_FILE.read_text(encoding="utf-8").strip()
+
+    assert pinned == SUPPORTED_PI_PYTHON
+
+
+def test_readme_starts_capture_with_uv_run():
     readme = README.read_text(encoding="utf-8")
 
-    assert ".venv/bin/pivr180-capture" in readme
-    assert "uv run pivr180-capture" not in readme
+    assert "uv run pivr180-capture" in readme
+
+
+def test_readme_documents_the_supported_pi_python():
+    readme = README.read_text(encoding="utf-8")
+
+    assert (
+        f"`device/.python-version` は Pi の OS の Python に合わせて {SUPPORTED_PI_PYTHON}"
+        in readme
+    )
