@@ -1,6 +1,7 @@
 import os
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 DEVICE_DIR = Path(__file__).resolve().parents[1]
@@ -60,6 +61,44 @@ def test_python_version_file_matches_supported_pi_python():
     pinned = PYTHON_VERSION_FILE.read_text(encoding="utf-8").strip()
 
     assert pinned == SUPPORTED_PI_PYTHON
+
+
+def test_real_uv_run_keeps_system_site_packages_venv(tmp_path):
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "pyproject.toml").write_text(
+        '[project]\nname = "venv-guard"\nversion = "0"\n'
+        'requires-python = ">=3.11"\ndependencies = []\n\n'
+        "[tool.uv]\npackage = false\n",
+        encoding="utf-8",
+    )
+    shutil.copy(PYTHON_VERSION_FILE, project / ".python-version")
+    excluded = {"UV_PYTHON", "UV_PROJECT_ENVIRONMENT", "VIRTUAL_ENV"}
+    env = {key: value for key, value in os.environ.items() if key not in excluded}
+    env["UV_OFFLINE"] = "1"
+    env["UV_CACHE_DIR"] = str(tmp_path / "uv-cache")
+    base_python = Path(sys.base_prefix) / "bin" / "python3"
+    subprocess.run(
+        ["uv", "venv", "--system-site-packages", "--python", str(base_python)],
+        check=True,
+        cwd=project,
+        env=env,
+        capture_output=True,
+    )
+    pyvenv_cfg = project / ".venv" / "pyvenv.cfg"
+    before = pyvenv_cfg.read_text(encoding="utf-8")
+
+    subprocess.run(
+        ["uv", "run", "python", "-c", "pass"],
+        check=True,
+        cwd=project,
+        env=env,
+        capture_output=True,
+    )
+
+    after = pyvenv_cfg.read_text(encoding="utf-8")
+    assert after == before
+    assert "include-system-site-packages = true" in after
 
 
 def test_readme_starts_capture_with_uv_run():
