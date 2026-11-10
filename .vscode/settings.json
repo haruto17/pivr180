@@ -1,5 +1,6 @@
 {
     "cSpell.words": [
+        "AtomS3",
         "Bambu",
         "Colour",
         "Entaniya",
@@ -10,10 +11,12 @@
         "MBFL",
         "MJPEG",
         "Picamera",
+        "PlatformIO",
         "pivr",
         "pytest",
         "SSCI",
         "Tauri",
-        "venv"
+        "venv",
+        "Xtensa"
     ]
 }
