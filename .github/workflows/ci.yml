@@ -1,0 +1,90 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  device:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: device
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.3.3
+        with:
+          working-directory: device
+          cache-dependency-glob: device/uv.lock
+      - run: uv sync --locked
+      - run: uv run pytest
+      - run: uv run ruff check
+      - run: uv run ruff format --check
+
+  schema:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: schema
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.3.3
+        with:
+          working-directory: schema
+          python-version: "3.13"
+          cache-dependency-glob: schema/uv.lock
+      - run: uv sync --locked
+      - run: uv run pytest
+
+  editor:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: editor
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 10
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: editor/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm test
+      - run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: editor/src-tauri
+      - run: cargo test
+        working-directory: editor/src-tauri
+
+  viewer:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: viewer
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 10
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: viewer/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm test
