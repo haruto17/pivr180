@@ -20,7 +20,7 @@ jobs:
         working-directory: device
     steps:
       - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v10
+      - uses: astral-sh/setup-uv@v10.3.3
         with:
           working-directory: device
           cache-dependency-glob: device/uv.lock
@@ -36,7 +36,7 @@ jobs:
         working-directory: schema
     steps:
       - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v10
+      - uses: astral-sh/setup-uv@v10.3.3
         with:
           working-directory: schema
           python-version: "3.13"
