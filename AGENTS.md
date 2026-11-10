@@ -7,18 +7,17 @@ For each issue, describe a concrete scenario (input, state, or sequence of event
 
 ### Review procedure
 
-The PR to review is specified when the review is requested. Monitor it on a schedule as follows.
+The PR to review is specified when the review is requested.
 
-1. Check the specified PR every 5 minutes.
-2. If the PR has been merged or closed, cancel the schedule and stop.
-3. On each check, look for (a) new commits since the commit recorded in your last "Review completed by Codex" comment, and (b) new replies to your review comments that you have not yet handled. If there are neither, do nothing and wait for the next check.
-4. If there are new commits, review only the changes added since the last reviewed commit (e.g., `git diff <last reviewed SHA>..<head SHA>`). Review the whole PR instead if there is no previous "Review completed by Codex" comment, or if the last reviewed commit is no longer in the PR's history (e.g., after a force-push or rebase).
-5. Read each new reply to your review comments:
+1. If the PR has been merged or closed, stop.
+2. Look for (a) new commits since the commit recorded in your last "Review completed by Codex" comment, and (b) new replies to your review comments that you have not yet handled. If there are neither, do nothing.
+3. If there are new commits, review only the changes added since the last reviewed commit (e.g., `git diff <last reviewed SHA>..<head SHA>`). Review the whole PR instead if there is no previous "Review completed by Codex" comment, or if the last reviewed commit is no longer in the PR's history (e.g., after a force-push or rebase).
+4. Read each new reply to your review comments:
    - If the reply says the issue was fixed, check the fix in the current head commit. If the issue is resolved and the fix introduces no new problems, add a 👍 (`+1`) reaction to the reply. If the issue is not resolved, reply explaining what is still wrong, and keep counting it as unresolved.
    - If the reply gives a reason for not fixing or deferring the issue, decide whether the reason is valid, following the deferral rules below.
    - Do not report the same issue again if it was fixed, or if the reply gives a valid reason for not fixing it.
-6. Post each new issue as a review comment on the relevant line, following the format below.
-7. When the review is complete, always post a PR comment in the following format, whether or not issues were found:
+5. Post each new issue as a review comment on the relevant line, following the format below.
+6. When the review is complete, always post a PR comment in the following format, whether or not issues were found:
 
 ```
 Review completed by Codex
@@ -28,7 +27,7 @@ critical: <count>, error: <count>, warning: <count>, nit: <count>
 deferred warnings: <links to follow-up issues, or "None">
 ```
 
-The counts cover every unresolved issue on the PR, including issues from previous reviews, not only those found in this check.
+The counts cover every unresolved issue on the PR, including issues from previous reviews, not only those found in this review.
 
 Do not include deferred warnings in the `warning` count.
 
@@ -40,8 +39,6 @@ Set `result` as follows:
 - Otherwise: `Changes requested`
 
 Do not write "LGTM by Codex" anywhere in the comment unless the result is LGTM.
-
-8. If the result is `LGTM by Codex`, the review is complete: cancel the 5-minute schedule and stop. Otherwise, keep checking the PR on schedule.
 
 ### Review comment format
 
