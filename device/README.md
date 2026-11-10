@@ -67,7 +67,7 @@ with open_camera_pair(left_index=0, right_index=1) as pair:
 
 ## 撮影
 
-`pivr180-capture`（`python -m pivr180_device` でも同じ）で撮影する。GPIO のシャッターボタンは M3 で追加するため、M2 では標準入力をシャッターにする。
+`pivr180-capture`（`python -m pivr180_device` でも同じ）で撮影する。AtomS3 Lite のシャッターボタンは M3 で追加するため、M2 では標準入力をシャッターにする。
 
 1. 保存先を用意する。保存先の親ディレクトリは自動では作らない。
 

@@ -69,3 +69,23 @@ schematic: [RPi-S5-conn.png](../docs/RPi-S5-conn.png)
 | TTL                                 | 28.4mm               |
 | Mount                               | M12 x P0.5           |
 | Model No.                           | RP-L190HQ            |
+
+## Shutter button / status LED
+
+M5Stack AtomS3 Lite (connected to the Pi 5 over USB)
+
+| Item           | Specification                                                   |
+|----------------|-----------------------------------------------------------------|
+| SKU            | C124                                                            |
+| SoC            | ESP32-S3FN8 @ Xtensa 32-bit LX7 dual-core processor, 240MHz     |
+| Flash          | 8MB                                                             |
+| Button         | Programmable button                                             |
+| RGB LED        | WS2812C-2020                                                    |
+| USB            | Type-C (power input, program download and serial communication) |
+| Power Voltage  | 5V                                                              |
+| Product Size   | 24.0 x 24.0 x 9.5mm                                             |
+| Product Weight | 5.3g                                                            |
+| Mounting       | M2 screw hole on the back                                       |
+| Operating Temp | 0 ~ 40°C                                                        |
+
+product page: https://docs.m5stack.com/en/core/AtomS3%20Lite

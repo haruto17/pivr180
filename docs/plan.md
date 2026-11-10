@@ -21,11 +21,17 @@ Meta Quest 3 で立体視できる VR180 写真を撮る、持ち歩き可能な
 ```
 [device: Pi 5]  --rsync(SSH)-->  [editor: Mac / Tauri]  --HTTPS(LAN)-->  [viewer: Quest 3 Browser / WebXR]
  撮影・記録のみ                   取り込み・補正・変換・配信              ギャラリー・VR180 立体表示
+       ^
+       | USB シリアル
+       v
+[firmware: AtomS3 Lite]
+ シャッターボタン・状態 LED
 ```
 
 | コンポーネント | 実行環境 | 役割 |
 |---|---|---|
 | device | Raspberry Pi 5 | 左右の画像を撮影して保存する。変換処理は行わない |
+| firmware | AtomS3 Lite（USB で Pi 5 に接続） | シャッターボタンの押下・解放を device に送り、device から受け取った状態を RGB LED で表示する |
 | editor | Mac（Tauri） | Pi から撮影データを取り込み、レンズの補正と VR180 形式への変換を行う。viewer の配信も担う |
 | viewer | Quest 3 Browser（WebXR） | 変換済みの写真を一覧表示し、VR180 として立体表示する |
 
@@ -34,6 +40,7 @@ Meta Quest 3 で立体視できる VR180 写真を撮る、持ち歩き可能な
 | ディレクトリ | 内容 |
 |---|---|
 | `device/` | Pi 側のソフトウェア（Python, uv） |
+| `firmware/` | AtomS3 Lite のファームウェア（PlatformIO ＋ Arduino, C++） |
 | `editor/` | Mac 側のエディタ（Tauri: Rust ＋ Svelte/TS/Vite, pnpm） |
 | `viewer/` | Quest 3 用の WebXR ビューア（Svelte/TS/Vite ＋ Three.js, pnpm） |
 | `schema/` | device と editor が共有する JSON Schema（meta.json、補正値など） |
@@ -75,9 +82,10 @@ git は空のディレクトリを記録しないため、各ディレクトリ�
 
 ### 物理 UI
 
-- GPIO にシャッターボタンをつなぐ。押すと撮影し、3 秒長押しすると安全にシャットダウンする。
-- 状態 LED で、待機中・撮影中・エラーを知らせる。
-- ボタンと LED の制御には gpiozero を使う。
+- USB でつないだ AtomS3 Lite のボタンをシャッターボタンにする。押すと撮影し、3 秒長押しすると安全にシャットダウンする。
+- AtomS3 Lite の RGB LED で、待機中・撮影中・エラーを知らせる。
+- AtomS3 Lite とは USB シリアルで通信する（[firmware](#firmware) を参照）。デバイスは `/dev/serial/by-id/` などの名前で固定して開く。
+- 3 秒長押しの判定は device 側で行う。AtomS3 Lite からはボタンの押下と解放だけを受け取る。
 - MVP は写真のみなので、写真／動画の切り替えスイッチは付けない。
 
 ### スマホ Web UI
@@ -96,8 +104,28 @@ git は空のディレクトリを記録しないため、各ディレクトリ�
 
 ### 運用
 
-- 撮影ソフトは systemd で自動起動し、撮影できる状態になったら LED で知らせる。
+- 撮影ソフトは systemd で自動起動し、撮影できる状態になったら AtomS3 Lite の LED で知らせる。
 - editor へ取り込んだ後も、Pi 側のデータは既定では消さない。削除はスマホ Web UI から手動で行うか、editor の「取り込み後に削除」オプションを使う。
+
+## firmware
+
+実行環境: M5Stack AtomS3 Lite（仕様は [device_specs.md](./device_specs.md) を参照）
+
+### 言語・環境
+
+- PlatformIO ＋ Arduino（C++）で作る。
+
+### Pi との通信
+
+- USB シリアル（CDC）で、1 行 1 メッセージのテキストをやりとりする。メッセージの具体的な書式は `firmware/` に文書化する。
+- AtomS3 Lite → Pi: ボタンの押下と解放だけを送る。長押しの判定は Pi 側で行う。
+- Pi → AtomS3 Lite: 状態（待機中・撮影中・エラー）を一定の間隔で送る。これをハートビートとする。
+
+### 表示
+
+- 受け取った状態を、RGB LED の色と点滅に変換して表示する。
+- Pi から最初のメッセージを受け取るまでは、ファームウェア単体で起動中の表示を行う。
+- メッセージを受け取った後に一定時間メッセージが来なければ、切断の表示にする。シャットダウン後も USB 給電が続く場合に、古い表示を残さないため。
 
 ## editor
 
@@ -165,9 +193,9 @@ git は空のディレクトリを記録しないため、各ディレクトリ�
   - Pi 5 の下側に取り付けるため、筐体内の部品配置はこれを前提にする。
   - M.2 M-key の 2230〜2280 に対応する。
 - USB-C PD モバイルバッテリー（機種は選定中。5V/5A 出力に対応したものを優先する）
-  - Pi 5 は 5V/5A を出せると確認できない電源につながると、USB 端子の出力を 600mA に制限する。MVP では USB 機器をつながないため影響は小さい。NVMe は PCIe で接続するので、この制限を受けない。実機で動作を確認する。
-- タクトスイッチ
-- LED ＋ 抵抗
+  - Pi 5 は 5V/5A を出せると確認できない電源につながると、USB 端子の出力を 600mA に制限する。MVP で USB につなぐのは AtomS3 Lite だけなので、影響は小さい見込み。NVMe は PCIe で接続するので、この制限を受けない。実機で動作を確認する。
+- M5Stack AtomS3 Lite（シャッターボタン兼状態 LED）
+- AtomS3 Lite と Pi 5 をつなぐ短い USB ケーブル（USB Type-C ⇔ USB Type-A）
 - 1/4" 三脚ナット
 - M2.5 ネジ類
 
@@ -185,16 +213,18 @@ git は空のディレクトリを記録しないため、各ディレクトリ�
   - 外観は Blender 上で手作業でモデリングして仕上げる。
 - Bambu Lab A1（FDM, 造形サイズ 256mm 角）で印刷する。
 - バッテリーは筐体に固定し、交換できるようにする。
+- AtomS3 Lite は、ボタンを押せて LED が見える位置に、背面の M2 ネジ穴などで固定する。Pi 5 とつなぐ USB ケーブルの通り道を設ける。
 
 ### 配線図
 
-- シャッターボタンと LED をつなぐ GPIO ピンの割り当てを記載する。
+- AtomS3 Lite の取り付け位置と、Pi 5 との USB 接続（使う USB 端子、ケーブルの長さと取り回し）を記載する。GPIO は使わない。
 
 ## テスト方針
 
 | 対象 | 方針 |
 |---|---|
-| device | カメラ部分を抽象化し、Fake に差し替えて Mac 上の pytest で検証する |
+| device | カメラ部分と AtomS3 Lite との通信を抽象化し、Fake に差し替えて Mac 上の pytest で検証する |
+| firmware | ハードウェアに依存しないロジック（メッセージの解釈、状態と表示の対応、ハートビートのタイムアウト）を分離し、PlatformIO の native 環境の単体テストで Mac 上で検証する |
 | editor | Rust の単体テストで、合成した魚眼画像を使って変換の精度を検証する。フロントエンドは Vitest |
 | viewer | Vitest |
 
@@ -220,3 +250,4 @@ git は空のディレクトリを記録しないため、各ディレクトリ�
 - [0005. viewer は WebXR で実装し、editor 内蔵の mkcert HTTPS サーバーから同一オリジンで配信する](./adr/0005-webxr-viewer-served-over-mkcert-https.md)
 - [0006. 電源は USB-C PD モバイルバッテリーとする](./adr/0006-usb-c-pd-power-bank.md)
 - [0007. 筐体は Blender で設計し、Bambu Lab A1 で FDM 印刷する](./adr/0007-blender-enclosure-fdm-printing.md)
+- [0008. シャッターボタンと状態表示は USB 接続の AtomS3 Lite で行う](./adr/0008-atoms3-lite-usb-shutter-and-status.md)
