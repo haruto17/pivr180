@@ -25,7 +25,7 @@ Adafruit 4313 の仕様は次のとおり。
 - 外形 35.8 × 35.8 × 5.3 mm、取り付け穴 2.5 mm ×4（穴の間隔 33 × 30 mm）
 - Adafruit が Pillow の画像を描画できる Python ライブラリ（Adafruit_CircuitPython_RGB_Display、Blinka 経由）を提供している
 
-カメラは CSI、NVMe 拡張ボードは PCIe の FFC で接続するため、GPIO ヘッダーは使っていない。
+カメラは CSI、NVMe 拡張ボードは PCIe の FFC で接続するため、どちらも GPIO ヘッダーのピンを使わない。
 
 ## 決定
 
