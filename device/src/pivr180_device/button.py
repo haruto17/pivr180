@@ -40,6 +40,7 @@ class ButtonShutter:
             except OSError:
                 logger.warning("lost the button link; reconnecting", exc_info=True)
                 self.close()
+                self._sleep(self._reconnect_interval_s)
                 continue
             now = self._clock()
             if (

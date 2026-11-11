@@ -193,6 +193,16 @@ def test_waits_the_reconnect_interval_between_attempts(clock: FakeClock):
     assert shot_times(shutter, clock) == [2 * RECONNECT_INTERVAL_S]
 
 
+def test_waits_the_reconnect_interval_after_losing_the_link(clock: FakeClock):
+    first = FakeSerialLink(clock, [(1.0, OSError("unplugged"))])
+    second = FakeSerialLink(clock, [(0.0, "press"), (0.0, "release")])
+    opener = LinkOpener(first, second)
+    shutter = ButtonShutter(opener, clock=clock, sleep=clock.sleep)
+
+    assert shot_times(shutter, clock) == [1.0 + RECONNECT_INTERVAL_S]
+    assert opener.opened == 2
+
+
 def test_context_exit_closes_the_link(clock: FakeClock):
     link = FakeSerialLink(clock, [(0.0, "press"), (0.5, "release"), (9.0, "press")])
 
