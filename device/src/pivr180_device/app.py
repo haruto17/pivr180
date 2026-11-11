@@ -9,7 +9,7 @@ from typing import TextIO
 
 from pivr180_device.atoms3.base import SerialLink
 from pivr180_device.atoms3.pyserial import DEFAULT_PORT, open_serial_link
-from pivr180_device.button import ButtonShutter
+from pivr180_device.button import ButtonShutter, Status
 from pivr180_device.camera.base import CameraPair
 from pivr180_device.camera.picamera2 import open_camera_pair
 from pivr180_device.exposure import ExposurePreview, ExposureSettings, ExposureSync
@@ -28,6 +28,11 @@ SHUTTER_STDIN = "stdin"
 
 OpenPair = Callable[[int, int], AbstractContextManager[CameraPair]]
 OpenLink = Callable[[str], SerialLink]
+ShowStatus = Callable[[Status], None]
+
+
+def _ignore_status(status: Status) -> None:
+    pass
 
 
 def stdin_triggers(stream: TextIO) -> Iterator[None]:
@@ -47,7 +52,12 @@ def shoot(
     return exposure.shoot(capture)
 
 
-def run(pair: CameraPair, storage: CaptureStorage, triggers: Iterable[object]) -> None:
+def run(
+    pair: CameraPair,
+    storage: CaptureStorage,
+    triggers: Iterable[object],
+    show: ShowStatus = _ignore_status,
+) -> None:
     pair.start()
     try:
         # Not left to the first preview frame or shot: waiting for SyncReady on
@@ -56,13 +66,15 @@ def run(pair: CameraPair, storage: CaptureStorage, triggers: Iterable[object]) -
         pair.left.capture_metadata()
         pair.right.capture_metadata()
         exposure = ExposureSync(pair)
-        with ExposurePreview(exposure) as preview:
+        with ExposurePreview(exposure, on_error=lambda: show(Status.ERROR)) as preview:
             logger.info("ready to shoot")
+            show(Status.IDLE)
             for _ in triggers:
                 # Not shooting on: the preview thread dies only on a camera error,
                 # and leaving the block makes stop() raise it instead of hiding it.
                 if not preview.running:
                     break
+                show(Status.CAPTURING)
                 try:
                     directory, synced = shoot(pair, exposure, storage)
                 except Exception:
@@ -71,7 +83,13 @@ def run(pair: CameraPair, storage: CaptureStorage, triggers: Iterable[object]) -
                     if exposure.locked_settings is not None:
                         raise
                     logger.exception("capture failed; back to preview")
+                    show(Status.ERROR)
                     continue
+                show(Status.IDLE)
+                # Not trusting idle alone: the preview may have died during the
+                # shot, and its error is recorded before on_error shows it.
+                if preview.error is not None:
+                    show(Status.ERROR)
                 if synced.warning:
                     logger.warning(
                         "saved %s with sync warning: timestamp diff %d ns "
@@ -140,6 +158,7 @@ def main(
     try:
         with ExitStack() as stack:
             triggers: Iterable[object]
+            show: ShowStatus = _ignore_status
             if args.shutter == SHUTTER_BUTTON:
                 shutter = stack.enter_context(
                     ButtonShutter(
@@ -147,10 +166,15 @@ def main(
                     )
                 )
                 triggers = shutter
+                show = shutter.show
             else:
                 triggers = stdin_triggers(sys.stdin if stdin is None else stdin)
-            pair = stack.enter_context(open_pair(args.left, args.right))
-            run(pair, storage, triggers)
+            try:
+                with open_pair(args.left, args.right) as pair:
+                    run(pair, storage, triggers, show)
+            except Exception:
+                show(Status.ERROR)
+                raise
     except KeyboardInterrupt:
         logger.info("interrupted; cameras released")
         return EXIT_INTERRUPTED

@@ -23,6 +23,7 @@ from pivr180_device.app import (
 )
 from pivr180_device.atoms3.fake import FakeClock, FakeSerialLink
 from pivr180_device.atoms3.pyserial import DEFAULT_PORT
+from pivr180_device.button import Status
 from pivr180_device.camera import CameraPair, Controls, FrameMetadata
 from pivr180_device.camera.fake import FakeCamera, FakeFrame
 from pivr180_device.storage import CaptureStorage
@@ -455,6 +456,115 @@ def test_waits_for_both_cameras_to_sync_before_preview(
     assert not right.started
 
 
+def test_shows_idle_when_ready_and_capturing_while_shooting(
+    pair: CameraPair, left: AutoCamera, storage: CaptureStorage
+):
+    statuses: list[Status] = []
+    shown_before_trigger: list[list[Status]] = []
+    shown_while_capturing: list[Status] = []
+    capture_frame = left.capture_frame
+
+    def recording_capture_frame() -> FakeFrame:
+        shown_while_capturing.append(statuses[-1])
+        return capture_frame()
+
+    left.capture_frame = recording_capture_frame
+
+    def triggers() -> Iterator[None]:
+        shown_before_trigger.append(list(statuses))
+        yield
+        yield
+
+    run(pair, storage, triggers(), statuses.append)
+
+    assert shown_before_trigger == [[Status.IDLE]]
+    assert statuses == [
+        Status.IDLE,
+        Status.CAPTURING,
+        Status.IDLE,
+        Status.CAPTURING,
+        Status.IDLE,
+    ]
+    assert set(shown_while_capturing) == {Status.CAPTURING}
+    assert len(captures(storage)) == 2
+
+
+def test_shows_an_error_after_a_failed_capture_until_the_next_shot(
+    pair: CameraPair, left: AutoCamera, storage: CaptureStorage
+):
+    left.failing_captures = 1
+    statuses: list[Status] = []
+
+    run(pair, storage, [None, None], statuses.append)
+
+    assert statuses == [
+        Status.IDLE,
+        Status.CAPTURING,
+        Status.ERROR,
+        Status.CAPTURING,
+        Status.IDLE,
+    ]
+    assert len(captures(storage)) == 1
+
+
+def test_shows_nothing_when_the_cameras_fail_to_sync_before_ready(
+    pair: CameraPair, right: AutoCamera, storage: CaptureStorage
+):
+    right.metadata_error = TimeoutError("cameras did not synchronise")
+    statuses: list[Status] = []
+
+    with pytest.raises(TimeoutError):
+        run(pair, storage, [None], statuses.append)
+
+    assert statuses == []
+
+
+def test_shows_an_error_as_soon_as_the_preview_sync_dies(
+    pair: CameraPair, left: AutoCamera, storage: CaptureStorage
+):
+    statuses: list[Status] = []
+    shown_before_trigger: list[Status] = []
+
+    def triggers() -> Iterator[None]:
+        left.broken.set()
+        assert wait_for(lambda: not preview_threads())
+        shown_before_trigger.append(statuses[-1])
+        yield
+
+    with pytest.raises(RuntimeError, match="exposure preview stopped on error"):
+        run(pair, storage, triggers(), statuses.append)
+
+    assert shown_before_trigger == [Status.ERROR]
+    assert statuses == [Status.IDLE, Status.ERROR]
+
+
+def test_keeps_the_error_when_the_preview_sync_dies_after_a_shot(
+    pair: CameraPair, left: AutoCamera, storage: CaptureStorage
+):
+    statuses: list[Status] = []
+    capture_frame = left.capture_frame
+    shown_after_shot: list[Status] = []
+
+    def breaking_capture_frame() -> FakeFrame:
+        frame = capture_frame()
+        left.broken.set()
+        return frame
+
+    left.capture_frame = breaking_capture_frame
+
+    def triggers() -> Iterator[None]:
+        yield
+        assert wait_for(lambda: not preview_threads())
+        shown_after_shot.append(statuses[-1])
+        yield
+
+    with pytest.raises(RuntimeError, match="exposure preview stopped on error"):
+        run(pair, storage, triggers(), statuses.append)
+
+    assert shown_after_shot == [Status.ERROR]
+    assert len(captures(storage)) == 1
+
+
 @pytest.mark.parametrize(
     ("text", "count"),
     [
@@ -531,7 +641,9 @@ def test_main_defaults_to_cameras_0_and_1():
         raise RuntimeError("camera index 1 not found; 1 camera(s) attached")
         yield
 
-    assert main([], open_pair=open_pair, stdin=io.StringIO("")) == EXIT_ERROR
+    rig = ButtonRig()
+
+    assert main([], open_pair=open_pair, open_link=rig.open_link) == EXIT_ERROR
     assert opened == [(0, 1)]
 
 
@@ -655,6 +767,8 @@ def test_main_shoots_on_each_button_press_and_powers_off_on_a_3_s_hold(
     assert rig.opened_ports == [DEFAULT_PORT]
     assert shutdown.calls == [(True, True, False, [], 2)]
     assert rig.clock.now == 5.0
+    assert rig.link.written[0] == (0.0, "idle")
+    assert all(at < 5.0 for at, _ in rig.link.written)
     for directory in sorted(root.iterdir()):
         meta_validator.validate(
             json.loads((directory / "meta.json").read_text(encoding="utf-8"))
@@ -820,7 +934,87 @@ def test_main_does_not_power_off_when_the_cameras_fail_to_start(
 
     assert code == EXIT_ERROR
     assert shutdown.calls == []
+    assert rig.link.written == [(0.0, "error")]
+    assert rig.link.closed
+
+
+def test_main_shows_an_error_when_the_cameras_cannot_be_opened(tmp_path: Path):
+    @contextmanager
+    def open_pair(left_index: int, right_index: int) -> Iterator[CameraPair]:
+        raise RuntimeError("camera index 1 not found; 1 camera(s) attached")
+        yield
+
+    rig = ButtonRig((0.0, "press"), (9.0, "release"))
+    shutdown = ShutdownRecorder()
+
+    code = main(
+        ["--captures-dir", str(tmp_path / "captures")],
+        open_pair=open_pair,
+        open_link=rig.open_link,
+        shutdown=shutdown,
+        clock=rig.clock,
+        sleep=rig.clock.sleep,
+    )
+
+    assert code == EXIT_ERROR
+    assert rig.opened_ports == [DEFAULT_PORT]
+    assert rig.link.written == [(0.0, "error")]
+    assert rig.link.closed
+    assert shutdown.calls == []
+
+
+def test_main_shows_nothing_when_interrupted_before_ready(tmp_path: Path):
+    @contextmanager
+    def open_pair(left_index: int, right_index: int) -> Iterator[CameraPair]:
+        raise KeyboardInterrupt
+        yield
+
+    rig = ButtonRig()
+
+    code = main(
+        ["--captures-dir", str(tmp_path / "captures")],
+        open_pair=open_pair,
+        open_link=rig.open_link,
+        shutdown=ShutdownRecorder(),
+    )
+
+    assert code == EXIT_INTERRUPTED
     assert rig.opened_ports == []
+
+
+def test_main_shows_an_error_before_releasing_the_button_link_on_a_fatal_error(
+    pair: CameraPair, left: AutoCamera, right: AutoCamera, tmp_path: Path
+):
+    rig = ButtonRig(
+        (0.0, "press"),
+        (0.5, "release"),
+        (1.0, lambda: wait_for(lambda: not left.started)),
+        (1e12, "hello"),
+    )
+    capture_frame = left.capture_frame
+
+    def capture_frame_then_reject_resume() -> FakeFrame:
+        right.rejected_controls = Controls(AeEnable=False, AwbEnable=False)
+        return capture_frame()
+
+    left.capture_frame = capture_frame_then_reject_resume
+    shutdown = ShutdownRecorder()
+
+    code = button_main(
+        ["--captures-dir", str(tmp_path / "captures")],
+        OpenPairRecorder(pair),
+        rig,
+        shutdown,
+    )
+
+    assert code == EXIT_ERROR
+    statuses = [status for _, status in rig.link.written]
+    changes = [s for i, s in enumerate(statuses) if i == 0 or s != statuses[i - 1]]
+    assert changes[0] == "idle"
+    assert changes[-1] == "error"
+    assert changes in (["idle", "error"], ["idle", "capturing", "error"])
+    assert rig.link.closed
+    assert shutdown.calls == []
 
 
 def test_main_with_stdin_shutter_never_opens_the_button_or_powers_off(
