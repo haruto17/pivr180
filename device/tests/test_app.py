@@ -21,6 +21,8 @@ from pivr180_device.app import (
     run,
     stdin_triggers,
 )
+from pivr180_device.atoms3.fake import FakeClock, FakeSerialLink
+from pivr180_device.atoms3.pyserial import DEFAULT_PORT
 from pivr180_device.camera import CameraPair, Controls, FrameMetadata
 from pivr180_device.camera.fake import FakeCamera, FakeFrame
 from pivr180_device.storage import CaptureStorage
@@ -332,7 +334,7 @@ def test_main_exits_with_failure_when_the_preview_cannot_be_resumed(
             yield "\n"
 
     code = main(
-        ["--captures-dir", str(tmp_path / "captures")],
+        ["--shutter", "stdin", "--captures-dir", str(tmp_path / "captures")],
         open_pair=open_pair,
         stdin=RejectingResumeStdin(),
     )
@@ -490,7 +492,16 @@ def test_main_shoots_on_each_enter_and_quits_on_q(
     root = tmp_path / "captures"
 
     code = main(
-        ["--left", "1", "--right", "0", "--captures-dir", str(root)],
+        [
+            "--shutter",
+            "stdin",
+            "--left",
+            "1",
+            "--right",
+            "0",
+            "--captures-dir",
+            str(root),
+        ],
         open_pair=open_pair,
         stdin=io.StringIO("\n\nq\n\n"),
     )
@@ -535,7 +546,7 @@ def test_main_reports_errors_and_exits_with_failure(
 
     with caplog.at_level(logging.ERROR, logger="pivr180_device.app"):
         code = main(
-            ["--captures-dir", str(tmp_path)],
+            ["--shutter", "stdin", "--captures-dir", str(tmp_path)],
             open_pair=open_pair,
             stdin=io.StringIO("\n"),
         )
@@ -561,7 +572,9 @@ def test_main_releases_cameras_on_ctrl_c(
     root = tmp_path / "captures"
 
     code = main(
-        ["--captures-dir", str(root)], open_pair=open_pair, stdin=InterruptingStdin()
+        ["--shutter", "stdin", "--captures-dir", str(root)],
+        open_pair=open_pair,
+        stdin=InterruptingStdin(),
     )
 
     assert code == EXIT_INTERRUPTED
@@ -570,6 +583,263 @@ def test_main_releases_cameras_on_ctrl_c(
     assert not left.started
     assert not right.started
     assert preview_threads() == []
+
+
+class ButtonRig:
+    def __init__(self, *script: tuple[float, str | OSError]) -> None:
+        self.clock = FakeClock()
+        self.link = FakeSerialLink(self.clock, script)
+        self.opened_ports: list[str] = []
+
+    def open_link(self, port: str) -> FakeSerialLink:
+        self.opened_ports.append(port)
+        return self.link
+
+
+class ShutdownRecorder:
+    def __init__(self, *observed: Callable[[], object]) -> None:
+        self._observed = observed
+        self.calls: list[tuple[object, ...]] = []
+        self.error: Exception | None = None
+
+    def __call__(self) -> None:
+        self.calls.append(tuple(observe() for observe in self._observed))
+        if self.error is not None:
+            raise self.error
+
+
+def button_main(
+    argv: list[str],
+    open_pair: OpenPairRecorder,
+    rig: ButtonRig,
+    shutdown: ShutdownRecorder,
+) -> int:
+    return main(
+        argv,
+        open_pair=open_pair,
+        open_link=rig.open_link,
+        shutdown=shutdown,
+        clock=rig.clock,
+        sleep=rig.clock.sleep,
+    )
+
+
+def test_main_shoots_on_each_button_press_and_powers_off_on_a_3_s_hold(
+    pair: CameraPair,
+    left: AutoCamera,
+    right: AutoCamera,
+    tmp_path: Path,
+    meta_validator,
+):
+    open_pair = OpenPairRecorder(pair)
+    root = tmp_path / "captures"
+    rig = ButtonRig(
+        (0.0, "press"),
+        (0.5, "release"),
+        (1.0, "press\r"),
+        (1.5, "release\r"),
+        (2.0, "press"),
+        (60.0, "release"),
+    )
+    shutdown = ShutdownRecorder(
+        lambda: open_pair.closed,
+        lambda: rig.link.closed,
+        lambda: left.started or right.started,
+        lambda: preview_threads(),
+        lambda: len(list(root.iterdir())),
+    )
+
+    code = button_main(["--captures-dir", str(root)], open_pair, rig, shutdown)
+
+    assert code == EXIT_OK
+    assert rig.opened_ports == [DEFAULT_PORT]
+    assert shutdown.calls == [(True, True, False, [], 2)]
+    assert rig.clock.now == 5.0
+    for directory in sorted(root.iterdir()):
+        meta_validator.validate(
+            json.loads((directory / "meta.json").read_text(encoding="utf-8"))
+        )
+
+
+def test_main_powers_off_on_a_hold_made_while_a_capture_blocks(
+    pair: CameraPair, left: AutoCamera, right: AutoCamera, tmp_path: Path
+):
+    open_pair = OpenPairRecorder(pair)
+    root = tmp_path / "captures"
+    rig = ButtonRig(
+        (0.0, "press"),
+        (0.5, "release"),
+        (1.0, "press"),
+        (4.5, "release"),
+    )
+    capture_frame = left.capture_frame
+    hold_seen: list[bool] = []
+
+    def slow_capture_frame() -> FakeFrame:
+        if not hold_seen:
+            hold_seen.append(wait_for(lambda: rig.clock.now >= 4.0))
+        return capture_frame()
+
+    left.capture_frame = slow_capture_frame
+    shutdown = ShutdownRecorder(
+        lambda: open_pair.closed,
+        lambda: rig.link.closed,
+        lambda: left.started or right.started,
+        lambda: len(list(root.iterdir())),
+    )
+
+    code = button_main(["--captures-dir", str(root)], open_pair, rig, shutdown)
+
+    assert code == EXIT_OK
+    assert hold_seen == [True]
+    assert shutdown.calls == [(True, True, False, 1)]
+
+
+def test_main_powers_off_when_a_capture_fails_after_a_hold_made_during_it(
+    pair: CameraPair,
+    left: AutoCamera,
+    right: AutoCamera,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+):
+    open_pair = OpenPairRecorder(pair)
+    root = tmp_path / "captures"
+    rig = ButtonRig(
+        (0.0, "press"),
+        (0.5, "release"),
+        (1.0, "press"),
+        (4.5, "release"),
+    )
+    capture_frame = left.capture_frame
+
+    def capture_frame_then_reject_resume() -> FakeFrame:
+        if right.rejected_controls is None:
+            assert wait_for(lambda: rig.clock.now >= 4.0)
+            right.rejected_controls = Controls(AeEnable=False, AwbEnable=False)
+        return capture_frame()
+
+    left.capture_frame = capture_frame_then_reject_resume
+    shutdown = ShutdownRecorder(
+        lambda: open_pair.closed,
+        lambda: rig.link.closed,
+        lambda: left.started or right.started,
+        lambda: preview_threads(),
+    )
+
+    with caplog.at_level(logging.ERROR, logger="pivr180_device.app"):
+        code = button_main(["--captures-dir", str(root)], open_pair, rig, shutdown)
+
+    assert code == EXIT_ERROR
+    assert shutdown.calls == [(True, True, False, [])]
+    [failure] = caplog.records
+    assert "stopped on error" in failure.getMessage()
+    assert "camera right rejected" in str(failure.exc_info[1])
+
+
+def test_main_opens_the_given_button_port(pair: CameraPair, tmp_path: Path):
+    rig = ButtonRig((0.0, "press"), (9.0, "release"))
+    shutdown = ShutdownRecorder()
+
+    code = button_main(
+        [
+            "--captures-dir",
+            str(tmp_path / "captures"),
+            "--button-port",
+            "/dev/serial/by-id/usb-Espressif_x-if00",
+        ],
+        OpenPairRecorder(pair),
+        rig,
+        shutdown,
+    )
+
+    assert code == EXIT_OK
+    assert rig.opened_ports == ["/dev/serial/by-id/usb-Espressif_x-if00"]
+    assert len(shutdown.calls) == 1
+
+
+def test_main_reports_a_failed_power_off(
+    pair: CameraPair, tmp_path: Path, caplog: pytest.LogCaptureFixture
+):
+    rig = ButtonRig((0.0, "press"), (9.0, "release"))
+    shutdown = ShutdownRecorder()
+    shutdown.error = RuntimeError("Interactive authentication required.")
+
+    with caplog.at_level(logging.ERROR, logger="pivr180_device.app"):
+        code = button_main(
+            ["--captures-dir", str(tmp_path / "captures")],
+            OpenPairRecorder(pair),
+            rig,
+            shutdown,
+        )
+
+    assert code == EXIT_ERROR
+    assert len(shutdown.calls) == 1
+    [failure] = caplog.records
+    assert "failed to power off" in failure.getMessage()
+    assert failure.exc_info is not None
+
+
+def test_main_still_powers_off_when_releasing_the_cameras_fails(
+    pair: CameraPair, tmp_path: Path, caplog: pytest.LogCaptureFixture
+):
+    class FailingClosePair(OpenPairRecorder):
+        @contextmanager
+        def __call__(self, left_index: int, right_index: int) -> Iterator[CameraPair]:
+            yield self.pair
+            raise RuntimeError("camera close failed")
+
+    rig = ButtonRig((0.0, "press"), (9.0, "release"))
+    shutdown = ShutdownRecorder(lambda: rig.link.closed)
+
+    with caplog.at_level(logging.ERROR, logger="pivr180_device.app"):
+        code = button_main(
+            ["--captures-dir", str(tmp_path / "captures")],
+            FailingClosePair(pair),
+            rig,
+            shutdown,
+        )
+
+    assert code == EXIT_ERROR
+    assert shutdown.calls == [(True,)]
+    assert any("stopped on error" in r.getMessage() for r in caplog.records)
+
+
+def test_main_does_not_power_off_when_the_cameras_fail_to_start(
+    pair: CameraPair, left: AutoCamera, tmp_path: Path
+):
+    rig = ButtonRig((0.0, "press"), (9.0, "release"))
+    shutdown = ShutdownRecorder()
+    left.metadata_error = TimeoutError("cameras did not synchronise")
+
+    code = button_main(
+        ["--captures-dir", str(tmp_path / "captures")],
+        OpenPairRecorder(pair),
+        rig,
+        shutdown,
+    )
+
+    assert code == EXIT_ERROR
+    assert shutdown.calls == []
+    assert rig.opened_ports == []
+
+
+def test_main_with_stdin_shutter_never_opens_the_button_or_powers_off(
+    pair: CameraPair, tmp_path: Path
+):
+    rig = ButtonRig()
+    shutdown = ShutdownRecorder()
+
+    code = main(
+        ["--shutter", "stdin", "--captures-dir", str(tmp_path / "captures")],
+        open_pair=OpenPairRecorder(pair),
+        stdin=io.StringIO("\nq\n"),
+        open_link=rig.open_link,
+        shutdown=shutdown,
+    )
+
+    assert code == EXIT_OK
+    assert rig.opened_ports == []
+    assert shutdown.calls == []
 
 
 def test_capture_command_is_installed_as_a_console_script():

@@ -1,14 +1,19 @@
 import argparse
 import logging
 import sys
+import time
 from collections.abc import Callable, Iterable, Iterator, Sequence
-from contextlib import AbstractContextManager
+from contextlib import AbstractContextManager, ExitStack
 from pathlib import Path
 from typing import TextIO
 
+from pivr180_device.atoms3.base import SerialLink
+from pivr180_device.atoms3.pyserial import DEFAULT_PORT, open_serial_link
+from pivr180_device.button import ButtonShutter
 from pivr180_device.camera.base import CameraPair
 from pivr180_device.camera.picamera2 import open_camera_pair
 from pivr180_device.exposure import ExposurePreview, ExposureSettings, ExposureSync
+from pivr180_device.power import power_off
 from pivr180_device.storage import DEFAULT_CAPTURE_ROOT, CaptureStorage
 from pivr180_device.sync import SyncedPair, capture_synced_pair
 
@@ -18,8 +23,11 @@ QUIT_COMMANDS = frozenset({"q", "quit"})
 EXIT_OK = 0
 EXIT_ERROR = 1
 EXIT_INTERRUPTED = 130
+SHUTTER_BUTTON = "button"
+SHUTTER_STDIN = "stdin"
 
 OpenPair = Callable[[int, int], AbstractContextManager[CameraPair]]
+OpenLink = Callable[[str], SerialLink]
 
 
 def stdin_triggers(stream: TextIO) -> Iterator[None]:
@@ -49,7 +57,7 @@ def run(pair: CameraPair, storage: CaptureStorage, triggers: Iterable[object]) -
         pair.right.capture_metadata()
         exposure = ExposureSync(pair)
         with ExposurePreview(exposure) as preview:
-            logger.info("ready: press Enter to shoot, q + Enter to quit")
+            logger.info("ready to shoot")
             for _ in triggers:
                 # Not shooting on: the preview thread dies only on a camera error,
                 # and leaving the block makes stop() raise it instead of hiding it.
@@ -83,7 +91,8 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         prog="pivr180-capture",
         description=(
             "Preview with left exposure/WB copied to the right camera, and shoot "
-            "a left/right pair each time Enter is pressed."
+            "a left/right pair on each shutter press. Holding the AtomS3 Lite "
+            "button for 3 s powers off."
         ),
     )
     parser.add_argument("--left", type=int, default=0, help="left camera index")
@@ -94,6 +103,20 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         default=DEFAULT_CAPTURE_ROOT,
         help=f"directory to save captures in (default: {DEFAULT_CAPTURE_ROOT})",
     )
+    parser.add_argument(
+        "--shutter",
+        choices=(SHUTTER_BUTTON, SHUTTER_STDIN),
+        default=SHUTTER_BUTTON,
+        help=(
+            "button: the AtomS3 Lite button; stdin: Enter to shoot, "
+            "q + Enter to quit (default: button)"
+        ),
+    )
+    parser.add_argument(
+        "--button-port",
+        default=DEFAULT_PORT,
+        help=f"AtomS3 Lite serial device path or glob (default: {DEFAULT_PORT})",
+    )
     return parser.parse_args(argv)
 
 
@@ -102,19 +125,45 @@ def main(
     *,
     open_pair: OpenPair = open_camera_pair,
     stdin: TextIO | None = None,
+    open_link: OpenLink = open_serial_link,
+    shutdown: Callable[[], None] = power_off,
+    clock: Callable[[], float] = time.monotonic,
+    sleep: Callable[[float], None] = time.sleep,
 ) -> int:
     args = _parse_args(argv)
     logging.basicConfig(
         level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s"
     )
     storage = CaptureStorage(args.captures_dir)
+    shutter: ButtonShutter | None = None
+    code = EXIT_OK
     try:
-        with open_pair(args.left, args.right) as pair:
-            run(pair, storage, stdin_triggers(sys.stdin if stdin is None else stdin))
+        with ExitStack() as stack:
+            triggers: Iterable[object]
+            if args.shutter == SHUTTER_BUTTON:
+                shutter = stack.enter_context(
+                    ButtonShutter(
+                        lambda: open_link(args.button_port), clock=clock, sleep=sleep
+                    )
+                )
+                triggers = shutter
+            else:
+                triggers = stdin_triggers(sys.stdin if stdin is None else stdin)
+            pair = stack.enter_context(open_pair(args.left, args.right))
+            run(pair, storage, triggers)
     except KeyboardInterrupt:
         logger.info("interrupted; cameras released")
         return EXIT_INTERRUPTED
     except Exception:
         logger.exception("capture stopped on error; cameras released")
-        return EXIT_ERROR
-    return EXIT_OK
+        code = EXIT_ERROR
+    # Not skipped after an error: the hold was the user's request, and by now the
+    # capture under way has ended and the cameras and the button are released.
+    if shutter is not None and shutter.shutdown_requested:
+        logger.info("powering off")
+        try:
+            shutdown()
+        except Exception:
+            logger.exception("failed to power off")
+            return EXIT_ERROR
+    return code
