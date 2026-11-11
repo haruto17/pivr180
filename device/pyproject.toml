@@ -3,7 +3,9 @@ name = "pivr180-device"
 version = "0.1.0"
 description = "pivr180 device software for Raspberry Pi 5"
 requires-python = ">=3.11"
-dependencies = []
+dependencies = [
+    "pyserial>=3.5",
+]
 
 [project.scripts]
 pivr180-capture = "pivr180_device.app:main"
