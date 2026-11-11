@@ -21,6 +21,8 @@ brew install platformio
 
 ハードウェアに依存しないロジックは `lib/` に置き、`native` 環境の単体テストで検証する。テストは `test/` に置く。
 
+Pi とのメッセージの書式は [PROTOCOL.md](./PROTOCOL.md) を参照。
+
 ## ビルド
 
 ```sh
