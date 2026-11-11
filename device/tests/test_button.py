@@ -145,9 +145,7 @@ def test_reconnects_after_a_disconnect_and_forgets_the_press(
     clock: FakeClock, caplog: pytest.LogCaptureFixture
 ):
     first = FakeSerialLink(clock, [(0.0, "press"), (1.0, OSError("unplugged"))])
-    second = FakeSerialLink(
-        clock, [(1.5, "release"), (2.0, "press"), (2.5, "release")]
-    )
+    second = FakeSerialLink(clock, [(1.5, "release"), (2.0, "press"), (2.5, "release")])
     shutter = make_shutter(clock, first, second)
 
     with caplog.at_level(logging.WARNING, logger="pivr180_device.button"):

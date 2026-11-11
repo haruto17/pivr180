@@ -25,9 +25,7 @@ class PySerialLink:
         self._buffer = b""
 
     def read_line(self) -> str | None:
-        self._buffer += self._port.read_until(
-            b"\n", MAX_LINE_BYTES - len(self._buffer)
-        )
+        self._buffer += self._port.read_until(b"\n", MAX_LINE_BYTES - len(self._buffer))
         if self._buffer.endswith(b"\n"):
             line, self._buffer = self._buffer[:-1], b""
             return line.decode("ascii", errors="replace")
