@@ -522,6 +522,30 @@ def test_preview_stops_and_reports_sync_errors(caplog: pytest.LogCaptureFixture)
     assert preview.error is None
 
 
+def test_preview_calls_on_error_after_recording_a_sync_error():
+    sync, _, _ = make_sync()
+    errors_seen: list[BaseException | None] = []
+    preview = ExposurePreview(sync, on_error=lambda: errors_seen.append(preview.error))
+
+    preview.start()
+    assert wait_for(lambda: not preview.running)
+
+    assert len(errors_seen) == 1
+    assert isinstance(errors_seen[0], RuntimeError)
+    with pytest.raises(RuntimeError, match="stopped on error"):
+        preview.stop()
+
+
+def test_preview_does_not_call_on_error_when_stopped_normally():
+    sync, _, _ = make_preview_pair(make_metadata())
+    calls: list[None] = []
+
+    with ExposurePreview(sync, on_error=lambda: calls.append(None)):
+        pass
+
+    assert calls == []
+
+
 def test_preview_cannot_be_started_twice():
     sync, _, _ = make_preview_pair(make_metadata())
     preview = ExposurePreview(sync)
