@@ -157,8 +157,8 @@ def main(
     except Exception:
         logger.exception("capture stopped on error; cameras released")
         code = EXIT_ERROR
-    # Not skipped after an error: the hold was the user's request, and once it
-    # is seen the only errors left come from stopping the preview and cameras.
+    # Not skipped after an error: the hold was the user's request, and by now the
+    # capture under way has ended and the cameras and the button are released.
     if shutter is not None and shutter.shutdown_requested:
         logger.info("powering off")
         try:

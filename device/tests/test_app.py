@@ -695,6 +695,47 @@ def test_main_powers_off_on_a_hold_made_while_a_capture_blocks(
     assert shutdown.calls == [(True, True, False, 1)]
 
 
+def test_main_powers_off_when_a_capture_fails_after_a_hold_made_during_it(
+    pair: CameraPair,
+    left: AutoCamera,
+    right: AutoCamera,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+):
+    open_pair = OpenPairRecorder(pair)
+    root = tmp_path / "captures"
+    rig = ButtonRig(
+        (0.0, "press"),
+        (0.5, "release"),
+        (1.0, "press"),
+        (4.5, "release"),
+    )
+    capture_frame = left.capture_frame
+
+    def capture_frame_then_reject_resume() -> FakeFrame:
+        if right.rejected_controls is None:
+            assert wait_for(lambda: rig.clock.now >= 4.0)
+            right.rejected_controls = Controls(AeEnable=False, AwbEnable=False)
+        return capture_frame()
+
+    left.capture_frame = capture_frame_then_reject_resume
+    shutdown = ShutdownRecorder(
+        lambda: open_pair.closed,
+        lambda: rig.link.closed,
+        lambda: left.started or right.started,
+        lambda: preview_threads(),
+    )
+
+    with caplog.at_level(logging.ERROR, logger="pivr180_device.app"):
+        code = button_main(["--captures-dir", str(root)], open_pair, rig, shutdown)
+
+    assert code == EXIT_ERROR
+    assert shutdown.calls == [(True, True, False, [])]
+    [failure] = caplog.records
+    assert "stopped on error" in failure.getMessage()
+    assert "camera right rejected" in str(failure.exc_info[1])
+
+
 def test_main_opens_the_given_button_port(pair: CameraPair, tmp_path: Path):
     rig = ButtonRig((0.0, "press"), (9.0, "release"))
     shutdown = ShutdownRecorder()

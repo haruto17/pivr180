@@ -45,7 +45,12 @@ class ButtonShutter:
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self._error: Exception | None = None
-        self.shutdown_requested = False
+        self._shutdown = threading.Event()
+        self._done = False
+
+    @property
+    def shutdown_requested(self) -> bool:
+        return self._shutdown.is_set()
 
     def start(self) -> None:
         if self._thread is not None:
@@ -60,7 +65,7 @@ class ButtonShutter:
 
     def __iter__(self) -> Iterator[float]:
         self.start()
-        while not self.shutdown_requested:
+        while not self._done:
             if self._error is not None:
                 raise self._error
             event = self._events.get()
@@ -68,7 +73,7 @@ class ButtonShutter:
                 self._error = event
                 raise event
             if isinstance(event, _Shutdown):
-                self.shutdown_requested = True
+                self._done = True
                 return
             yield event.released_at
 
@@ -121,6 +126,9 @@ class ButtonShutter:
                     logger.info(
                         "button held for %.1f s; shutdown requested", now - pressed_at
                     )
+                    # Not left to the consumer: an error in the capture under way
+                    # would leave the loop before it reads this event.
+                    self._shutdown.set()
                     self._events.put(_Shutdown())
                     return
                 if line is None:

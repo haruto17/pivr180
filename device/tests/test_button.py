@@ -265,7 +265,24 @@ def test_hold_during_a_capture_still_shuts_down_on_time(clock: FakeClock):
             during_capture.append((reached, shutter.shutdown_requested))
 
     assert shots == [0.5]
-    assert during_capture == [(True, False)]
+    assert during_capture == [(True, True)]
+    assert shutter.shutdown_requested
+
+
+def test_hold_is_requested_even_if_the_consumer_stops_during_a_capture(
+    clock: FakeClock,
+):
+    link = FakeSerialLink(
+        clock,
+        [(0.0, "press"), (0.5, "release"), (1.0, "press"), (4.5, "release")],
+    )
+    shutter = make_shutter(clock, link)
+
+    with shutter:
+        for _ in shutter:
+            assert wait_for(lambda: clock.now >= 4.0)
+            break
+
     assert shutter.shutdown_requested
 
 
