@@ -7,7 +7,13 @@ from collections.abc import Callable
 import pytest
 
 from pivr180_device.atoms3.fake import FakeClock, FakeSerialLink, ScriptExhausted
-from pivr180_device.button import RECONNECT_INTERVAL_S, SHUTDOWN_HOLD_S, ButtonShutter
+from pivr180_device.button import (
+    RECONNECT_INTERVAL_S,
+    SHUTDOWN_HOLD_S,
+    STATUS_INTERVAL_S,
+    ButtonShutter,
+    Status,
+)
 
 
 class LinkOpener:
@@ -347,3 +353,204 @@ def test_close_without_start_does_nothing(clock: FakeClock):
     ButtonShutter(opener, clock=clock, sleep=clock.sleep).close()
 
     assert opener.opened == 0
+
+
+def test_sends_the_shown_status_on_connecting_and_every_second(clock: FakeClock):
+    link = FakeSerialLink(clock, [(5.0, "hello")])
+    shutter = make_shutter(clock, link)
+    shutter.show(Status.IDLE)
+
+    shot_times(shutter, clock)
+
+    assert STATUS_INTERVAL_S == 1.0
+    assert link.written == [
+        (0.0, "idle"),
+        (1.0, "idle"),
+        (2.0, "idle"),
+        (3.0, "idle"),
+        (4.0, "idle"),
+        (5.0, "idle"),
+    ]
+
+
+def test_sends_nothing_until_a_status_is_shown(clock: FakeClock):
+    link = FakeSerialLink(clock, [(0.0, "press"), (0.5, "release"), (3.0, "hello")])
+
+    assert shot_times(make_shutter(clock, link), clock) == [0.5]
+    assert link.written == []
+
+
+def test_sends_a_changed_status_at_once_and_resends_it_a_second_later(
+    clock: FakeClock,
+):
+    link = FakeSerialLink(
+        clock,
+        [(1.5, lambda: shutter.show(Status.CAPTURING)), (4.0, "hello")],
+    )
+    shutter = make_shutter(clock, link)
+    shutter.show(Status.IDLE)
+
+    shot_times(shutter, clock)
+
+    assert link.written == [
+        (0.0, "idle"),
+        (1.0, "idle"),
+        (1.5, "capturing"),
+        (2.5, "capturing"),
+        (3.5, "capturing"),
+    ]
+
+
+def test_sends_the_status_shown_by_the_consumer(clock: FakeClock):
+    captured = threading.Event()
+    link = FakeSerialLink(
+        clock,
+        [
+            (0.0, "press"),
+            (0.5, "release"),
+            (1.0, lambda: wait_for(captured.is_set)),
+            (2.0, "hello"),
+        ],
+    )
+    shutter = make_shutter(clock, link)
+    shutter.show(Status.IDLE)
+
+    with shutter:
+        try:
+            for _ in shutter:
+                shutter.show(Status.CAPTURING)
+                captured.set()
+        except ScriptExhausted:
+            pass
+
+    statuses = [status for _, status in link.written]
+    changed_at = statuses.index("capturing")
+    assert statuses[:changed_at] == ["idle"] * changed_at
+    assert set(statuses[changed_at:]) == {"capturing"}
+    assert 0.5 <= link.written[changed_at][0] <= 1.0
+
+
+@pytest.mark.parametrize(
+    ("status", "message"),
+    [
+        (Status.IDLE, "idle"),
+        (Status.CAPTURING, "capturing"),
+        (Status.ERROR, "error"),
+    ],
+)
+def test_sends_each_status_as_its_protocol_message(
+    clock: FakeClock, status: Status, message: str
+):
+    link = FakeSerialLink(clock, [(0.5, "hello")])
+    shutter = make_shutter(clock, link)
+    shutter.show(status)
+
+    shot_times(shutter, clock)
+
+    assert link.written == [(0.0, message)]
+
+
+def test_resends_the_status_at_once_after_reconnecting(clock: FakeClock):
+    first = FakeSerialLink(clock, [(1.5, OSError("unplugged"))])
+    second = FakeSerialLink(clock, [(4.0, "hello")])
+    shutter = make_shutter(clock, first, second)
+    shutter.show(Status.IDLE)
+
+    shot_times(shutter, clock)
+
+    assert first.written == [(0.0, "idle"), (1.0, "idle")]
+    assert second.written == [(2.5, "idle"), (3.5, "idle")]
+
+
+def test_a_failed_write_reconnects_and_keeps_reading_the_button(
+    clock: FakeClock, caplog: pytest.LogCaptureFixture
+):
+    first = FakeSerialLink(clock, [(0.0, "press")], write_error=OSError("timeout"))
+    second = FakeSerialLink(clock, [(1.0, "press"), (1.5, "release")])
+    shutter = make_shutter(clock, first, second)
+    shutter.show(Status.IDLE)
+
+    with caplog.at_level(logging.WARNING, logger="pivr180_device.button"):
+        assert shot_times(shutter, clock) == [1.5]
+
+    assert first.closed
+    assert first.written == []
+    assert second.written == [(1.0, "idle")]
+    assert any("lost the button link" in r.getMessage() for r in caplog.records)
+
+
+def test_stops_sending_once_a_hold_requests_shutdown(clock: FakeClock):
+    link = FakeSerialLink(clock, [(0.0, "press"), (10.0, "release")])
+    shutter = make_shutter(clock, link)
+    shutter.show(Status.IDLE)
+
+    assert shot_times(shutter, clock) == []
+    shutter.show(Status.ERROR)
+    shutter.close()
+
+    assert shutter.shutdown_requested
+    assert link.written == [(0.0, "idle"), (1.0, "idle"), (2.0, "idle")]
+    assert link.closed
+
+
+def test_close_sends_the_last_shown_status_before_closing_the_link(
+    clock: FakeClock,
+):
+    link = FakeSerialLink(clock, [(1e12, "press")])
+    shutter = make_shutter(clock, link)
+    shutter.show(Status.IDLE)
+
+    shutter.start()
+    assert wait_for(lambda: bool(link.written))
+    shutter.show(Status.ERROR)
+    shutter.close()
+
+    assert link.written[-1][1] == "error"
+    assert link.closed
+    assert reader_threads() == []
+
+
+def test_close_without_start_sends_the_shown_status_once(clock: FakeClock):
+    link = FakeSerialLink(clock, [(0.0, "press"), (0.5, "release")])
+    opener = LinkOpener(link)
+    shutter = ButtonShutter(opener, clock=clock, sleep=clock.sleep)
+    shutter.show(Status.ERROR)
+
+    shutter.close()
+    shutter.close()
+
+    assert opener.opened == 1
+    assert link.written == [(0.0, "error")]
+    assert link.closed
+    assert not shutter.shutdown_requested
+
+
+def test_close_without_start_logs_an_unavailable_link(
+    clock: FakeClock, caplog: pytest.LogCaptureFixture
+):
+    opener = LinkOpener(FileNotFoundError("no serial device matches /dev/x"))
+    shutter = ButtonShutter(opener, clock=clock, sleep=clock.sleep)
+    shutter.show(Status.ERROR)
+
+    with caplog.at_level(logging.WARNING, logger="pivr180_device.button"):
+        shutter.close()
+
+    [record] = caplog.records
+    assert "error" in record.getMessage()
+    assert "/dev/x" in record.getMessage()
+
+
+def test_close_without_start_logs_a_failed_write_and_closes_the_link(
+    clock: FakeClock, caplog: pytest.LogCaptureFixture
+):
+    link = FakeSerialLink(clock, write_error=OSError("timeout"))
+    shutter = ButtonShutter(LinkOpener(link), clock=clock, sleep=clock.sleep)
+    shutter.show(Status.ERROR)
+
+    with caplog.at_level(logging.WARNING, logger="pivr180_device.button"):
+        shutter.close()
+
+    assert link.closed
+    [record] = caplog.records
+    assert "error" in record.getMessage()
+    assert record.exc_info is not None

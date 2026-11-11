@@ -1,5 +1,7 @@
 from collections import deque
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
+
+ScriptItem = str | OSError | Callable[[], object]
 
 
 class ScriptExhausted(Exception):
@@ -21,12 +23,12 @@ class FakeSerialLink:
     def __init__(
         self,
         clock: FakeClock,
-        script: Iterable[tuple[float, str | OSError]] = (),
+        script: Iterable[tuple[float, ScriptItem]] = (),
         read_timeout_s: float = 0.25,
         write_error: OSError | None = None,
     ) -> None:
         self._clock = clock
-        self._script: deque[tuple[float, str | OSError]] = deque(script)
+        self._script: deque[tuple[float, ScriptItem]] = deque(script)
         self._read_timeout_s = read_timeout_s
         self._write_error = write_error
         self.written: list[tuple[float, str]] = []
@@ -46,6 +48,9 @@ class FakeSerialLink:
         self._clock.now = max(self._clock.now, at)
         if isinstance(item, OSError):
             raise item
+        if callable(item):
+            item()
+            return None
         return item
 
     def write_line(self, line: str) -> None:
