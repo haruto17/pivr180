@@ -67,7 +67,7 @@ with open_camera_pair(left_index=0, right_index=1) as pair:
 
 ## 撮影
 
-`pivr180-capture`（`python -m pivr180_device` でも同じ）で撮影する。AtomS3 Lite のシャッターボタンは M3 で追加するため、M2 では標準入力をシャッターにする。
+`pivr180-capture`（`python -m pivr180_device` でも同じ）で撮影する。シャッターは USB でつないだ AtomS3 Lite のボタンを使う（[AtomS3 Lite のボタン](#atoms3-lite-のボタン)）。開発用に、標準入力をシャッターにすることもできる。
 
 1. 保存先を用意する。保存先の親ディレクトリは自動では作らない。
 
@@ -87,21 +87,83 @@ with open_camera_pair(left_index=0, right_index=1) as pair:
    | `--left` | `0` | 左カメラの番号 |
    | `--right` | `1` | 右カメラの番号 |
    | `--captures-dir` | `/data/captures` | 保存先 |
+   | `--shutter` | `button` | `button`: AtomS3 Lite のボタン、`stdin`: 標準入力 |
+   | `--button-port` | `/dev/serial/by-id/usb-Espressif*` | AtomS3 Lite のシリアルデバイスのパス（glob も可） |
 
 3. 左右の同期（約 7 秒）を待ち、`ready` のログが出たら撮影できる。
-   - Enter: 撮影する。保存先がログに出る。
-   - `q` + Enter、Ctrl+D、Ctrl+C: 終了する。
+   - `--shutter button`（既定）
+     - ボタンを押して 3 秒以内に離す: 撮影する。保存先がログに出る。
+     - ボタンを 3 秒押し続ける: カメラとシリアルを解放してから、Pi をシャットダウンする。
+     - Ctrl+C: 終了する。
+   - `--shutter stdin`
+     - Enter: 撮影する。保存先がログに出る。
+     - `q` + Enter、Ctrl+D、Ctrl+C: 終了する。
 
 動作は次のとおり。
 
 - プレビュー中は、左カメラの ExposureTime / AnalogueGain / ColourGains を右カメラへ随時コピーする。
-- Enter を押すと、その時点の左カメラの値で左右とも固定し、左右のフレームを組にして `<captures-dir>/<YYYYMMDD-HHMMSS-NNN>/{left.jpg,right.jpg,meta.json}` に保存する。保存後はプレビューへ戻る。
+- シャッターを押すと、その時点の左カメラの値で左右とも固定し、左右のフレームを組にして `<captures-dir>/<YYYYMMDD-HHMMSS-NNN>/{left.jpg,right.jpg,meta.json}` に保存する。保存後はプレビューへ戻る。
   - 左右の時刻差が 3 回とも 1ms を超えた場合は、保存したうえで警告をログに出す。
-- 撮影や保存に失敗した場合は、エラーをログに出してプレビューへ戻り、次の Enter を待つ。
+- 撮影や保存に失敗した場合は、エラーをログに出してプレビューへ戻り、次のシャッターを待つ。
   - 撮影後にプレビューへ戻せなかった場合（左の AE/AWB の再開や右の設定に失敗した場合）は、エラーを表示して終了する（終了コード 1）。
 - 起動時に左右の同期が取れない場合は、エラーを表示して終了する（終了コード 1）。
-- プレビュー中の露出/WB のコピーが失敗した場合は、その場でエラーをログに出し、次の入力（Enter・`q` など）で撮影せずに終了する（終了コード 1）。
+- プレビュー中の露出/WB のコピーが失敗した場合は、その場でエラーをログに出し、次のシャッター（標準入力では `q` なども）で撮影せずに終了する（終了コード 1）。
 - 終了時（Ctrl+C を含む）は、プレビュー中のコピーを止めてからカメラを停止し、解放する。
+
+## AtomS3 Lite のボタン
+
+AtomS3 Lite とは USB シリアルで通信する。メッセージの書式は [firmware/PROTOCOL.md](../firmware/PROTOCOL.md) を参照。
+
+- `press` を受け取った時刻から押している時間を測る。
+  - 3 秒経つ前に `release` を受け取ったら、1 回撮影する。押した時点で撮影しないのは、シャットダウンのための長押しで撮影しないため。
+  - 押したまま 3 秒経ったら、離すのを待たずにシャットダウンする。
+- 撮影・保存中に押した場合は、その撮影が終わってから判定する。そのため、撮影中の長押しは 3 秒より遅れて判定されることがある。
+- 行末の `\r`、知らないメッセージ、`press` のない `release` は無視する。
+- AtomS3 Lite が見つからない場合や抜けた場合は、1 秒ごとに開き直す。抜ける前に押していた分は捨てる。
+
+### デバイスの名前
+
+`/dev/ttyACM0` などの番号は接続の順番で変わるため、`/dev/serial/by-id/` の名前で開く。名前には個体ごとのシリアル番号が入るため、既定値は `/dev/serial/by-id/usb-Espressif*` の glob にしている。一致するデバイスが 1 つのときだけ開き、0 個や 2 個以上のときは開かずに待つ。
+
+Pi に AtomS3 Lite をつないで、実際の名前を確認する。
+
+```sh
+ls -l /dev/serial/by-id/
+# 例: usb-Espressif_USB_JTAG_serial_debug_unit_XX:XX:XX:XX:XX:XX-if00 -> ../../ttyACM0
+```
+
+他の Espressif 製のデバイスもつなぐ場合は、`--button-port` に確認した名前をそのまま指定する。
+
+シリアルデバイスを開くには、実行するユーザーが `dialout` グループに入っている必要がある（Raspberry Pi OS の初期ユーザーは入っている）。
+
+```sh
+groups  # dialout が含まれるか確認する
+sudo usermod -aG dialout "$USER"  # 含まれない場合。再ログイン後に有効になる
+```
+
+### シャットダウンの権限
+
+シャットダウンは `systemctl --no-ask-password poweroff` で行う。Pi の画面でログインしている場合はそのまま実行できるが、SSH や systemd から起動した場合は polkit の許可が必要になる。許可がない場合は、パスワードを尋ねずに失敗し、エラーをログに出して終了する（終了コード 1）。
+
+実行するユーザー（例: `pi`）に許可する場合は、`/etc/polkit-1/rules.d/50-pivr180-poweroff.rules` を作る。
+
+```js
+polkit.addRule(function (action, subject) {
+  if (
+    (action.id == "org.freedesktop.login1.power-off" ||
+      action.id == "org.freedesktop.login1.power-off-multiple-sessions") &&
+    subject.user == "pi"
+  ) {
+    return polkit.Result.YES;
+  }
+});
+```
+
+次のコマンドで、パスワードを尋ねられずにシャットダウンできれば設定できている。
+
+```sh
+systemctl --no-ask-password poweroff
+```
 
 保存した meta.json は、次のコマンドで schema に適合するか確認できる。
 
