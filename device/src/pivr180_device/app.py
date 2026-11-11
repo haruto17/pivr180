@@ -69,6 +69,10 @@ def run(
         with ExposurePreview(exposure, on_error=lambda: show(Status.ERROR)) as preview:
             logger.info("ready to shoot")
             show(Status.IDLE)
+            # Not trusting idle alone: the preview may have died before it was
+            # shown, and its error is recorded before on_error shows it.
+            if preview.error is not None:
+                show(Status.ERROR)
             for _ in triggers:
                 # Not shooting on: the preview thread dies only on a camera error,
                 # and leaving the block makes stop() raise it instead of hiding it.

@@ -538,6 +538,41 @@ def test_shows_an_error_as_soon_as_the_preview_sync_dies(
     assert statuses == [Status.IDLE, Status.ERROR]
 
 
+def test_keeps_the_error_when_the_preview_sync_dies_before_ready_shows_idle(
+    pair: CameraPair,
+    left: AutoCamera,
+    storage: CaptureStorage,
+    caplog: pytest.LogCaptureFixture,
+):
+    statuses: list[Status] = []
+    shown_before_trigger: list[Status] = []
+
+    class BreakPreviewOnReady(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:
+            if record.getMessage() == "ready to shoot":
+                left.broken.set()
+                assert wait_for(lambda: not preview_threads())
+
+    def triggers() -> Iterator[None]:
+        shown_before_trigger.append(statuses[-1])
+        yield
+
+    app_logger = logging.getLogger("pivr180_device.app")
+    handler = BreakPreviewOnReady()
+    app_logger.addHandler(handler)
+    try:
+        with (
+            caplog.at_level(logging.INFO, logger="pivr180_device.app"),
+            pytest.raises(RuntimeError, match="exposure preview stopped on error"),
+        ):
+            run(pair, storage, triggers(), statuses.append)
+    finally:
+        app_logger.removeHandler(handler)
+
+    assert shown_before_trigger == [Status.ERROR]
+    assert statuses == [Status.ERROR, Status.IDLE, Status.ERROR]
+
+
 def test_keeps_the_error_when_the_preview_sync_dies_after_a_shot(
     pair: CameraPair, left: AutoCamera, storage: CaptureStorage
 ):
