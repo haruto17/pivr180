@@ -1,5 +1,8 @@
 import logging
+import threading
+import time
 from collections import deque
+from collections.abc import Callable
 
 import pytest
 
@@ -28,12 +31,29 @@ def make_shutter(clock: FakeClock, *links: FakeSerialLink | OSError) -> ButtonSh
 
 def shot_times(shutter: ButtonShutter, clock: FakeClock) -> list[float]:
     times: list[float] = []
-    try:
-        for _ in shutter:
-            times.append(clock.now)
-    except ScriptExhausted:
-        pass
+    with shutter:
+        try:
+            times.extend(shutter)
+        except ScriptExhausted:
+            pass
     return times
+
+
+def wait_for(predicate: Callable[[], bool], timeout_s: float = 5.0) -> bool:
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        if predicate():
+            return True
+        time.sleep(0.001)
+    return predicate()
+
+
+def reader_threads() -> list[threading.Thread]:
+    return [
+        thread
+        for thread in threading.enumerate()
+        if thread.name == "button-reader" and thread.is_alive()
+    ]
 
 
 @pytest.fixture
@@ -152,7 +172,6 @@ def test_reconnects_after_a_disconnect_and_forgets_the_press(
         assert shot_times(shutter, clock) == [2.5]
 
     assert first.closed
-    assert not second.closed
     assert any("lost the button link" in r.getMessage() for r in caplog.records)
 
 
@@ -220,12 +239,94 @@ def test_close_logs_link_close_errors_instead_of_raising(
             raise OSError("already gone")
 
     link = FailingCloseLink(clock, [(0.0, "press"), (0.5, "release")])
-    shutter = make_shutter(clock, link)
-    next(iter(shutter))
 
     with caplog.at_level(logging.WARNING, logger="pivr180_device.button"):
-        shutter.close()
+        assert shot_times(make_shutter(clock, link), clock) == [0.5]
 
     [record] = caplog.records
     assert "failed to close" in record.getMessage()
     assert record.exc_info is not None
+
+
+def test_hold_during_a_capture_still_shuts_down_on_time(clock: FakeClock):
+    link = FakeSerialLink(
+        clock,
+        [(0.0, "press"), (0.5, "release"), (1.0, "press"), (4.5, "release")],
+    )
+    shutter = make_shutter(clock, link)
+    during_capture: list[tuple[bool, bool]] = []
+
+    with shutter:
+        shots = []
+        for released_at in shutter:
+            shots.append(released_at)
+            # Stands in for a capture that blocks until after the release.
+            reached = wait_for(lambda: clock.now >= 4.0)
+            during_capture.append((reached, shutter.shutdown_requested))
+
+    assert shots == [0.5]
+    assert during_capture == [(True, False)]
+    assert shutter.shutdown_requested
+
+
+def test_short_press_during_a_capture_shoots_after_it(clock: FakeClock):
+    link = FakeSerialLink(
+        clock,
+        [
+            (0.0, "press"),
+            (0.5, "release"),
+            (1.0, "press"),
+            (1.2, "release"),
+            (2.0, "press"),
+            (9.0, "release"),
+        ],
+    )
+    shutter = make_shutter(clock, link)
+
+    with shutter:
+        shots = []
+        for released_at in shutter:
+            shots.append(released_at)
+            if len(shots) == 1:
+                assert wait_for(lambda: clock.now >= 5.0)
+
+    assert shots == [0.5, 1.2]
+    assert shutter.shutdown_requested
+
+
+def test_close_stops_the_reader_and_closes_the_link(clock: FakeClock):
+    link = FakeSerialLink(clock, [(1e12, "press")])
+    shutter = make_shutter(clock, link)
+
+    shutter.start()
+    assert wait_for(lambda: clock.now > 0)
+    shutter.close()
+
+    assert reader_threads() == []
+    assert link.closed
+
+
+def test_reader_errors_are_raised_to_the_consumer_and_stop_the_reader(
+    clock: FakeClock,
+):
+    link = FakeSerialLink(clock, [(0.0, "press"), (0.5, "release")])
+    shutter = make_shutter(clock, link)
+
+    with shutter:
+        iterator = iter(shutter)
+        assert next(iterator) == 0.5
+        with pytest.raises(ScriptExhausted):
+            next(iterator)
+        with pytest.raises(ScriptExhausted):
+            list(shutter)
+
+    assert reader_threads() == []
+    assert link.closed
+
+
+def test_close_without_start_does_nothing(clock: FakeClock):
+    opener = LinkOpener()
+
+    ButtonShutter(opener, clock=clock, sleep=clock.sleep).close()
+
+    assert opener.opened == 0

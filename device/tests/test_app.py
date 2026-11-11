@@ -661,6 +661,40 @@ def test_main_shoots_on_each_button_press_and_powers_off_on_a_3_s_hold(
         )
 
 
+def test_main_powers_off_on_a_hold_made_while_a_capture_blocks(
+    pair: CameraPair, left: AutoCamera, right: AutoCamera, tmp_path: Path
+):
+    open_pair = OpenPairRecorder(pair)
+    root = tmp_path / "captures"
+    rig = ButtonRig(
+        (0.0, "press"),
+        (0.5, "release"),
+        (1.0, "press"),
+        (4.5, "release"),
+    )
+    capture_frame = left.capture_frame
+    hold_seen: list[bool] = []
+
+    def slow_capture_frame() -> FakeFrame:
+        if not hold_seen:
+            hold_seen.append(wait_for(lambda: rig.clock.now >= 4.0))
+        return capture_frame()
+
+    left.capture_frame = slow_capture_frame
+    shutdown = ShutdownRecorder(
+        lambda: open_pair.closed,
+        lambda: rig.link.closed,
+        lambda: left.started or right.started,
+        lambda: len(list(root.iterdir())),
+    )
+
+    code = button_main(["--captures-dir", str(root)], open_pair, rig, shutdown)
+
+    assert code == EXIT_OK
+    assert hold_seen == [True]
+    assert shutdown.calls == [(True, True, False, 1)]
+
+
 def test_main_opens_the_given_button_port(pair: CameraPair, tmp_path: Path):
     rig = ButtonRig((0.0, "press"), (9.0, "release"))
     shutdown = ShutdownRecorder()
