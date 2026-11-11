@@ -147,19 +147,23 @@ sudo usermod -aG dialout "$USER"  # 含まれない場合。再ログイン後�
 
 シャットダウンは `systemctl --no-ask-password poweroff` で行う。Pi の画面でログインしている場合はそのまま実行できるが、SSH や systemd から起動した場合は polkit の許可が必要になる。許可がない場合は、パスワードを尋ねずに失敗し、エラーをログに出して終了する（終了コード 1）。
 
-実行するユーザー（例: `pi`）に許可する場合は、`/etc/polkit-1/rules.d/50-pivr180-poweroff.rules` を作る。
+撮影ソフトを実行するユーザーに許可するため、`/etc/polkit-1/rules.d/50-pivr180-poweroff.rules` を作る。`<ユーザー名>` は、撮影ソフトを実行するユーザーの名前（`whoami` で確認できる）に置き換える。現在の Raspberry Pi OS には既定の `pi` ユーザーはなく、OS の書き込み時に設定したユーザーになる。
 
 ```js
 polkit.addRule(function (action, subject) {
   if (
     (action.id == "org.freedesktop.login1.power-off" ||
       action.id == "org.freedesktop.login1.power-off-multiple-sessions") &&
-    subject.user == "pi"
+    subject.user == "<ユーザー名>"
   ) {
     return polkit.Result.YES;
   }
 });
 ```
+
+- `/etc/polkit-1/rules.d/` は root と polkitd しか読めないため、作成や確認には sudo が必要になる（例: `sudo nano /etc/polkit-1/rules.d/50-pivr180-poweroff.rules`、`sudo ls -l /etc/polkit-1/rules.d/`）。
+- polkitd はルールの変更を自動で読み込む。反映されない場合は `sudo systemctl restart polkit` を実行する。
+- ルールの読み込みエラーは `sudo journalctl -u polkit` で確認できる。
 
 次のコマンドで、パスワードを尋ねられずにシャットダウンできれば設定できている。
 
