@@ -23,19 +23,26 @@ class PySerialLink:
         self._port = port
         self._name = name
         self._buffer = b""
+        self._discarding = False
 
     def read_line(self) -> str | None:
-        self._buffer += self._port.read_until(b"\n", MAX_LINE_BYTES - len(self._buffer))
+        chunk = self._port.read_until(b"\n", MAX_LINE_BYTES - len(self._buffer))
+        if self._discarding:
+            if chunk.endswith(b"\n"):
+                self._discarding = False
+            return None
+        self._buffer += chunk
         if self._buffer.endswith(b"\n"):
             line, self._buffer = self._buffer[:-1], b""
             return line.decode("ascii", errors="replace")
         if len(self._buffer) >= MAX_LINE_BYTES:
             logger.warning(
-                "%s: discarding %d bytes without a line break",
+                "%s: discarding a line longer than %d bytes",
                 self._name,
-                len(self._buffer),
+                MAX_LINE_BYTES,
             )
             self._buffer = b""
+            self._discarding = True
         return None
 
     def close(self) -> None:

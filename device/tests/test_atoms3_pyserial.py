@@ -71,14 +71,18 @@ def test_decodes_non_ascii_bytes_without_failing():
     assert link.read_line() == "�press"
 
 
-def test_discards_bytes_that_never_end_a_line(caplog: pytest.LogCaptureFixture):
-    port = StubPort(b"x" * MAX_LINE_BYTES, b"press\n")
+def test_discards_an_oversized_line_through_its_line_feed(
+    caplog: pytest.LogCaptureFixture,
+):
+    port = StubPort(
+        b"x" * MAX_LINE_BYTES, b"x" * MAX_LINE_BYTES, b"press\n", b"release\n"
+    )
     link = PySerialLink(port, "port")
 
     with caplog.at_level(logging.WARNING, logger="pivr180_device.atoms3.pyserial"):
-        assert read_lines(link, 2) == [None, "press"]
+        assert read_lines(link, 4) == [None, None, None, "release"]
 
-    assert port.reads[1] == (b"\n", MAX_LINE_BYTES)
+    assert port.reads[1:] == [(b"\n", MAX_LINE_BYTES)] * 3
     [record] = caplog.records
     assert "port" in record.getMessage()
     assert f"{MAX_LINE_BYTES} bytes" in record.getMessage()
