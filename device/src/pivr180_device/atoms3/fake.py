@@ -23,10 +23,13 @@ class FakeSerialLink:
         clock: FakeClock,
         script: Iterable[tuple[float, str | OSError]] = (),
         read_timeout_s: float = 0.25,
+        write_error: OSError | None = None,
     ) -> None:
         self._clock = clock
         self._script: deque[tuple[float, str | OSError]] = deque(script)
         self._read_timeout_s = read_timeout_s
+        self._write_error = write_error
+        self.written: list[tuple[float, str]] = []
         self.closed = False
 
     def read_line(self) -> str | None:
@@ -44,6 +47,13 @@ class FakeSerialLink:
         if isinstance(item, OSError):
             raise item
         return item
+
+    def write_line(self, line: str) -> None:
+        if self.closed:
+            raise OSError("fake serial link is closed")
+        if self._write_error is not None:
+            raise self._write_error
+        self.written.append((self._clock.now, line))
 
     def close(self) -> None:
         self.closed = True
