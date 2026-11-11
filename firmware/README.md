@@ -2,6 +2,8 @@
 
 M5Stack AtomS3 Lite で動くファームウェア。PlatformIO ＋ Arduino（C++）で作る。詳細は [docs/plan.md](../docs/plan.md) の firmware 節と [ADR 0008](../docs/adr/0008-atoms3-lite-usb-shutter-and-status.md) を参照。
 
+Pi との通信の書式は [PROTOCOL.md](./PROTOCOL.md) を参照。
+
 ## 準備
 
 PlatformIO Core（`pio` コマンド）をインストールする。
@@ -20,8 +22,6 @@ brew install platformio
 | `native` | Mac 上で動かす単体テスト（Unity） |
 
 ハードウェアに依存しないロジックは `lib/` に置き、`native` 環境の単体テストで検証する。テストは `test/` に置く。
-
-Pi とのメッセージの書式は [PROTOCOL.md](./PROTOCOL.md) を参照。
 
 ## ビルド
 
