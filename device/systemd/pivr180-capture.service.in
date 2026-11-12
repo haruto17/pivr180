@@ -1,0 +1,17 @@
+[Unit]
+Description=pivr180 capture software
+
+[Service]
+Type=simple
+User=@USER@
+WorkingDirectory=@DEVICE_DIR@
+# Not `uv run`: it may recreate the venv from .python-version without --system-site-packages.
+ExecStart=@DEVICE_DIR@/.venv/bin/pivr180-capture
+Restart=on-failure
+RestartSec=5
+# Not SIGTERM: only KeyboardInterrupt stops the preview and releases the cameras and serial before exiting.
+KillSignal=SIGINT
+SuccessExitStatus=130
+
+[Install]
+WantedBy=multi-user.target
