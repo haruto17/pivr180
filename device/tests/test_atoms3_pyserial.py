@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+import serial
 
 from pivr180_device.atoms3 import SerialLink
 from pivr180_device.atoms3 import pyserial as pyserial_link
@@ -12,6 +13,7 @@ from pivr180_device.atoms3.pyserial import (
     DEFAULT_PORT,
     MAX_LINE_BYTES,
     READ_TIMEOUT_S,
+    WRITE_TIMEOUT_S,
     PySerialLink,
     open_serial_link,
     resolve_port,
@@ -22,6 +24,8 @@ class StubPort:
     def __init__(self, *chunks: bytes | OSError) -> None:
         self._chunks: deque[bytes | OSError] = deque(chunks)
         self.reads: list[tuple[bytes, int | None]] = []
+        self.writes: list[bytes] = []
+        self.write_error: OSError | None = None
         self.closed = False
 
     def read_until(self, expected: bytes, size: int | None) -> bytes:
@@ -32,6 +36,12 @@ class StubPort:
         if isinstance(chunk, OSError):
             raise chunk
         return chunk
+
+    def write(self, data: bytes) -> int:
+        if self.write_error is not None:
+            raise self.write_error
+        self.writes.append(data)
+        return len(data)
 
     def close(self) -> None:
         self.closed = True
@@ -95,6 +105,23 @@ def test_read_errors_propagate():
         link.read_line()
 
 
+@pytest.mark.parametrize("status", ["idle", "capturing", "error"])
+def test_write_line_sends_the_line_terminated_by_a_line_feed(status: str):
+    port = StubPort()
+
+    PySerialLink(port, "port").write_line(status)
+
+    assert port.writes == [f"{status}\n".encode("ascii")]
+
+
+def test_write_timeouts_propagate_as_os_errors():
+    port = StubPort()
+    port.write_error = serial.SerialTimeoutException("Write timeout")
+
+    with pytest.raises(OSError, match="Write timeout"):
+        PySerialLink(port, "port").write_line("idle")
+
+
 def test_close_closes_the_port():
     port = StubPort()
 
@@ -156,7 +183,12 @@ def test_open_serial_link_opens_the_resolved_port(
     assert opened == [
         (
             (str(device),),
-            {"baudrate": BAUD_RATE, "timeout": READ_TIMEOUT_S, "exclusive": True},
+            {
+                "baudrate": BAUD_RATE,
+                "timeout": READ_TIMEOUT_S,
+                "write_timeout": WRITE_TIMEOUT_S,
+                "exclusive": True,
+            },
         )
     ]
     assert link.read_line() == "press"

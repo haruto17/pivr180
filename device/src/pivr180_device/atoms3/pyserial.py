@@ -9,11 +9,14 @@ logger = logging.getLogger(__name__)
 DEFAULT_PORT = "/dev/serial/by-id/usb-Espressif*"
 BAUD_RATE = 115200
 READ_TIMEOUT_S = 0.1
+WRITE_TIMEOUT_S = 0.5
 MAX_LINE_BYTES = 256
 
 
 class _Port(Protocol):
     def read_until(self, expected: bytes, size: int | None) -> bytes: ...
+
+    def write(self, data: bytes) -> int | None: ...
 
     def close(self) -> None: ...
 
@@ -45,6 +48,9 @@ class PySerialLink:
             self._discarding = True
         return None
 
+    def write_line(self, line: str) -> None:
+        self._port.write(f"{line}\n".encode("ascii"))
+
     def close(self) -> None:
         self._port.close()
 
@@ -62,8 +68,14 @@ def resolve_port(pattern: str) -> str:
 
 def open_serial_link(pattern: str = DEFAULT_PORT) -> PySerialLink:
     path = resolve_port(pattern)
+    # Not without write_timeout: if the AtomS3 Lite stops draining its input, a
+    # blocking write would stall the thread that also times the button.
     port = serial.Serial(
-        path, baudrate=BAUD_RATE, timeout=READ_TIMEOUT_S, exclusive=True
+        path,
+        baudrate=BAUD_RATE,
+        timeout=READ_TIMEOUT_S,
+        write_timeout=WRITE_TIMEOUT_S,
+        exclusive=True,
     )
     logger.info("opened %s", path)
     return PySerialLink(port, path)

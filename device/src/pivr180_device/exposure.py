@@ -172,9 +172,15 @@ class ExposureSync:
 
 
 class ExposurePreview:
-    def __init__(self, sync: ExposureSync, paused_poll_s: float = 0.01) -> None:
+    def __init__(
+        self,
+        sync: ExposureSync,
+        paused_poll_s: float = 0.01,
+        on_error: Callable[[], None] | None = None,
+    ) -> None:
         self._sync = sync
         self._paused_poll_s = paused_poll_s
+        self._on_error = on_error
         self._state = threading.Lock()
         self._stop: threading.Event | None = None
         self._thread: threading.Thread | None = None
@@ -237,6 +243,8 @@ class ExposurePreview:
                 logger.exception("exposure preview sync failed; stopping preview")
                 with self._state:
                     self._error = error
+                if self._on_error is not None:
+                    self._on_error()
                 return
             if synced is None:
                 stop.wait(self._paused_poll_s)

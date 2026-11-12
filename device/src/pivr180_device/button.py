@@ -4,6 +4,7 @@ import threading
 import time
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
+from enum import StrEnum
 from typing import Self
 
 from pivr180_device.atoms3.base import SerialLink
@@ -14,6 +15,13 @@ PRESS = "press"
 RELEASE = "release"
 SHUTDOWN_HOLD_S = 3.0
 RECONNECT_INTERVAL_S = 1.0
+STATUS_INTERVAL_S = 1.0
+
+
+class Status(StrEnum):
+    IDLE = "idle"
+    CAPTURING = "capturing"
+    ERROR = "error"
 
 
 @dataclass(frozen=True)
@@ -35,12 +43,16 @@ class ButtonShutter:
         sleep: Callable[[float], None] = time.sleep,
         shutdown_hold_s: float = SHUTDOWN_HOLD_S,
         reconnect_interval_s: float = RECONNECT_INTERVAL_S,
+        status_interval_s: float = STATUS_INTERVAL_S,
     ) -> None:
         self._open_link = open_link
         self._clock = clock
         self._sleep = sleep
         self._shutdown_hold_s = shutdown_hold_s
         self._reconnect_interval_s = reconnect_interval_s
+        self._status_interval_s = status_interval_s
+        self._status_lock = threading.Lock()
+        self._status: Status | None = None
         self._events: queue.Queue[_Shoot | _Shutdown | Exception] = queue.Queue()
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
@@ -51,6 +63,10 @@ class ButtonShutter:
     @property
     def shutdown_requested(self) -> bool:
         return self._shutdown.is_set()
+
+    def show(self, status: Status) -> None:
+        with self._status_lock:
+            self._status = status
 
     def start(self) -> None:
         if self._thread is not None:
@@ -81,6 +97,13 @@ class ButtonShutter:
         self._stop.set()
         if self._thread is not None:
             self._thread.join()
+            return
+        with self._status_lock:
+            status, self._status = self._status, None
+        if status is not None:
+            # Not left unsent: without the reader, an error before it starts would
+            # leave the AtomS3 Lite showing that it is still booting.
+            self._show_once(status)
 
     def __enter__(self) -> Self:
         return self
@@ -92,6 +115,8 @@ class ButtonShutter:
         link: SerialLink | None = None
         pressed_at: float | None = None
         failed = False
+        sent: Status | None = None
+        sent_at = 0.0
         try:
             while not self._stop.is_set():
                 if link is None:
@@ -110,7 +135,15 @@ class ButtonShutter:
                     if failed:
                         logger.info("button link connected")
                         failed = False
+                    sent = None
+                now = self._clock()
+                status = self._due_status(sent, sent_at, now)
                 try:
+                    # Not written from the thread that calls show(): this thread
+                    # reopens and closes the link, so it is the only one to use it.
+                    if status is not None:
+                        link.write_line(status)
+                        sent, sent_at = status, now
                     line = link.read_line()
                 except OSError:
                     logger.warning("lost the button link; reconnecting", exc_info=True)
@@ -149,7 +182,47 @@ class ButtonShutter:
             self._events.put(error)
         finally:
             if link is not None:
+                if self._stop.is_set():
+                    self._flush_status(link, sent)
                 _close_link(link)
+
+    def _due_status(
+        self, sent: Status | None, sent_at: float, now: float
+    ) -> Status | None:
+        with self._status_lock:
+            status = self._status
+        if status is None:
+            return None
+        if status != sent or now - sent_at >= self._status_interval_s:
+            return status
+        return None
+
+    def _flush_status(self, link: SerialLink, sent: Status | None) -> None:
+        with self._status_lock:
+            status = self._status
+        if status is None or status == sent:
+            return
+        try:
+            link.write_line(status)
+        except OSError:
+            logger.warning(
+                "failed to show %s on the AtomS3 Lite", status, exc_info=True
+            )
+
+    def _show_once(self, status: Status) -> None:
+        try:
+            link = self._open_link()
+        except OSError as error:
+            logger.warning("could not show %s on the AtomS3 Lite (%s)", status, error)
+            return
+        try:
+            link.write_line(status)
+        except OSError:
+            logger.warning(
+                "failed to show %s on the AtomS3 Lite", status, exc_info=True
+            )
+        finally:
+            _close_link(link)
 
 
 def _close_link(link: SerialLink) -> None:
