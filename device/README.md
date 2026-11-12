@@ -110,6 +110,48 @@ with open_camera_pair(left_index=0, right_index=1) as pair:
 - プレビュー中の露出/WB のコピーが失敗した場合は、その場でエラーをログに出し、次のシャッター（標準入力では `q` なども）で撮影せずに終了する（終了コード 1）。
 - 終了時（Ctrl+C を含む）は、プレビュー中のコピーを止めてからカメラを停止し、解放する。
 
+## 自動起動
+
+撮影ソフトを systemd のサービス（`pivr180-capture.service`）にして、Pi の起動時にログインなしで起動する。
+
+1. 次のことを済ませておく。
+   - `./scripts/setup_pi_venv.sh` で venv を作る（[Raspberry Pi での venv の作成](#raspberry-pi-での-venv-の作成)）。
+   - 保存先の `/data/captures` を作り、実行するユーザーを所有者にする（[撮影](#撮影)）。
+   - 実行するユーザーを `dialout` グループに入れる（[デバイスの名前](#デバイスの名前)）。
+   - polkit のルールを作る（[シャットダウンの権限](#シャットダウンの権限)）。systemd から起動した撮影ソフトは、ルールがないと長押しでシャットダウンできない。
+
+2. `device/` で次のスクリプトを実行する。
+
+   ```sh
+   ./scripts/install_service.sh
+   ```
+
+   スクリプトは、`systemd/pivr180-capture.service.in` の実行ユーザーと `device/` のパスを、スクリプトを実行したユーザーと現在の `device/` の絶対パスに置き換えて `/etc/systemd/system/pivr180-capture.service` に置き、有効にしてから（再）起動する。リポジトリを移動した場合や、実行するユーザーを変える場合は、スクリプトを再実行すればサービスが更新される。
+
+サービスは次のように動く。
+
+- `.venv/bin/pivr180-capture` を既定のオプション（`--shutter button`）で起動する。撮影できる状態になると、AtomS3 Lite の LED が緑の点灯になる（[状態の表示](#状態の表示)）。
+- 異常終了した場合（起動時に左右の同期が取れない、カメラがまだ使えない、撮影後にプレビューへ戻せない、SIGKILL で終了したなど）は、5 秒後に起動し直す。起動し直している間、LED は起動中の表示になり、撮影できる状態になると緑に戻る。
+- `sudo systemctl stop pivr180-capture` で止めると、Ctrl+C と同じくカメラとシリアルを解放してから終了する。この場合は起動し直さない。
+
+ログは次のコマンドで確認できる。
+
+```sh
+journalctl -u pivr180-capture -f
+```
+
+カメラとシリアルは同時に 1 つのプロセスしか使えないため、`uv run pivr180-capture` で手動で起動する場合は、先にサービスを止める。
+
+```sh
+sudo systemctl stop pivr180-capture
+```
+
+自動起動をやめる場合は、次のコマンドで無効にして止める。
+
+```sh
+sudo systemctl disable --now pivr180-capture
+```
+
 ## AtomS3 Lite のボタン
 
 AtomS3 Lite とは USB シリアルで通信する。メッセージの書式は [firmware/PROTOCOL.md](../firmware/PROTOCOL.md) を参照。
