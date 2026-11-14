@@ -101,6 +101,28 @@ def test_capture_raises_after_stop():
         camera.capture_metadata()
 
 
+def test_capture_preview_returns_a_solid_image_without_consuming_frames():
+    frame = FakeFrame(make_metadata())
+    camera = FakeCamera(
+        "left", frames=[frame], preview_size=(32, 24), preview_color=(200, 10, 20)
+    )
+    camera.start()
+
+    preview = camera.capture_preview()
+
+    assert preview.size == (32, 24)
+    assert preview.getpixel((0, 0)) == (200, 10, 20)
+    assert camera.previews == 1
+    assert camera.capture_frame() is frame
+
+
+def test_capture_preview_raises_when_not_started():
+    camera = FakeCamera("left")
+
+    with pytest.raises(RuntimeError):
+        camera.capture_preview()
+
+
 def test_set_controls_records_history_and_merged_controls():
     camera = FakeCamera("right")
 

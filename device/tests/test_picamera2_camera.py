@@ -1,5 +1,7 @@
 import sys
+import threading
 import types
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -64,6 +66,7 @@ class StubPicamera2:
         self.started = False
         self.closed = False
         self.timeout = False
+        self.post_callback: Callable[[StubRequest], None] | None = None
 
     def push(self, *requests: StubRequest) -> None:
         self.requests.extend(requests)
@@ -154,6 +157,7 @@ def test_start_configures_full_resolution_with_sync_server_controls():
             {
                 "still": {
                     "main": {"size": (4056, 3040)},
+                    "lores": {"size": (640, 480), "format": "RGB888"},
                     "buffer_count": 2,
                     "controls": {
                         "FrameRate": 10.0,
@@ -366,6 +370,111 @@ def test_set_controls_passes_a_copy_to_picamera2():
     assert picam2.calls == [
         ("set_controls", {"ExposureTime": 20_000, "ColourGains": (1.9, 1.6)})
     ]
+
+
+def wait_until_preview_wanted(
+    camera: Picamera2Camera, waiter: threading.Thread
+) -> None:
+    while not camera._preview_wanted:
+        assert waiter.is_alive()
+        waiter.join(0.001)
+
+
+def deliver_until_done(
+    picam2: StubPicamera2, request: StubRequest, waiter: threading.Thread
+) -> None:
+    assert picam2.post_callback is not None
+    while waiter.is_alive():
+        picam2.post_callback(request)
+        waiter.join(0.001)
+
+
+def test_capture_preview_returns_the_lores_image_of_the_next_frame():
+    camera, picam2 = started_camera()
+    idle = StubRequest(make_raw_metadata())
+    picam2.post_callback(idle)  # type: ignore[misc]
+    request = StubRequest(make_raw_metadata())
+    previews: list[Any] = []
+    waiter = threading.Thread(target=lambda: previews.append(camera.capture_preview()))
+
+    waiter.start()
+    deliver_until_done(picam2, request, waiter)
+
+    assert previews == [request.image]
+    assert idle.made_images == []
+    assert request.made_images == ["lores"]
+    assert capture_calls(picam2) == []
+
+
+def test_capture_preview_raises_when_not_started():
+    camera = make_camera(StubPicamera2())
+
+    with pytest.raises(RuntimeError, match="not started"):
+        camera.capture_preview()
+
+
+def test_capture_preview_times_out_when_no_frame_arrives():
+    picam2 = StubPicamera2()
+    camera = Picamera2Camera(
+        picam2, "cam", SERVER, is_sync_server=True, capture_timeout_s=0.01
+    )
+    camera.start()
+
+    with pytest.raises(TimeoutError, match="no preview frame arrived within 0.01s"):
+        camera.capture_preview()
+
+
+def test_stopping_wakes_a_waiting_capture_preview_with_an_error():
+    camera, _ = started_camera()
+    errors: list[Exception] = []
+
+    def capture() -> None:
+        try:
+            camera.capture_preview()
+        except RuntimeError as error:
+            errors.append(error)
+
+    waiter = threading.Thread(target=capture)
+    waiter.start()
+    wait_until_preview_wanted(camera, waiter)
+    camera.stop()
+    waiter.join(1.0)
+
+    assert not waiter.is_alive()
+    [error] = errors
+    assert str(error).endswith(" stopped")
+
+
+def test_a_failed_preview_conversion_is_logged_on_the_camera_thread(
+    caplog: pytest.LogCaptureFixture,
+):
+    picam2 = StubPicamera2()
+    camera = Picamera2Camera(
+        picam2, "cam", SERVER, is_sync_server=True, capture_timeout_s=0.05
+    )
+    camera.start()
+    request = StubRequest(make_raw_metadata())
+
+    def broken(name: str) -> StubImage:
+        raise RuntimeError("bad lores buffer")
+
+    request.make_image = broken  # type: ignore[method-assign]
+    errors: list[Exception] = []
+
+    def capture() -> None:
+        try:
+            camera.capture_preview()
+        except TimeoutError as error:
+            errors.append(error)
+
+    waiter = threading.Thread(target=capture)
+    waiter.start()
+    wait_until_preview_wanted(camera, waiter)
+    picam2.post_callback(request)  # type: ignore[misc]
+    waiter.join(5.0)
+
+    assert len(errors) == 1
+    assert "camera cam: failed to make a preview" in caplog.text
 
 
 def test_close_closes_picamera2():

@@ -2,6 +2,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol, TypedDict
 
+from PIL.Image import Image
+
 
 @dataclass(frozen=True)
 class FrameMetadata:
@@ -45,6 +47,8 @@ class Camera(Protocol):
     def capture_metadata(self) -> FrameMetadata: ...
 
     def capture_frame(self) -> Frame: ...
+
+    def capture_preview(self) -> Image: ...
 
 
 @dataclass(frozen=True)
