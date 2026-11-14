@@ -4,7 +4,9 @@ version = "0.1.0"
 description = "pivr180 device software for Raspberry Pi 5"
 requires-python = ">=3.11"
 dependencies = [
+    "fastapi>=0.162.7",
     "pyserial>=3.5",
+    "uvicorn>=0.54.0",
 ]
 
 [project.scripts]
@@ -16,6 +18,7 @@ build-backend = "uv_build"
 
 [dependency-groups]
 dev = [
+    "httpx2>=2.16.0",
     "jsonschema>=4.23",
     "pytest>=9.2.0",
     "ruff>=0.17.4",

@@ -13,6 +13,8 @@ uv run ruff format --check
 
 Mac には picamera2 がないため、テストは Fake（`pivr180_device.camera.fake`）やスタブを使う。
 
+スマホ Web UI の画面（`web/`）は Node.js 24 と pnpm 10 で開発する（[スマホ Web UI](#スマホ-web-ui)）。
+
 ## Raspberry Pi での venv の作成
 
 Picamera2 と libcamera の Python バインディングは apt の OS パッケージ（`python3-picamera2`）で入れる。pip / uv ではインストールできないため、venv は `--system-site-packages` で作成し、OS 側のパッケージを参照できるようにする。
@@ -89,6 +91,7 @@ with open_camera_pair(left_index=0, right_index=1) as pair:
    | `--captures-dir` | `/data/captures` | 保存先 |
    | `--shutter` | `button` | `button`: AtomS3 Lite のボタン、`stdin`: 標準入力 |
    | `--button-port` | `/dev/serial/by-id/usb-Espressif*` | AtomS3 Lite のシリアルデバイスのパス（glob も可） |
+   | `--web-port` | `80` | スマホ Web UI のポート（[スマホ Web UI](#スマホ-web-ui)） |
 
 3. 左右の同期（約 7 秒）を待ち、`ready` のログが出たら撮影できる。`--shutter button` では、AtomS3 Lite の LED が緑の点灯になる（[状態の表示](#状態の表示)）。
    - `--shutter button`（既定）
@@ -131,6 +134,7 @@ with open_camera_pair(left_index=0, right_index=1) as pair:
 サービスは次のように動く。
 
 - `.venv/bin/pivr180-capture` を既定のオプション（`--shutter button`）で起動する。撮影できる状態になると、AtomS3 Lite の LED が緑の点灯になる（[状態の表示](#状態の表示)）。
+- `AmbientCapabilities=CAP_NET_BIND_SERVICE` により、root ではなく実行ユーザーのまま、スマホ Web UI を 80 番ポートで配信する（[スマホ Web UI](#スマホ-web-ui)）。
 - 異常終了した場合（起動時に左右の同期が取れない、カメラがまだ使えない、撮影後にプレビューへ戻せない、SIGKILL で終了したなど）は、5 秒後に起動し直す。起動し直している間、LED は起動中の表示になり、撮影できる状態になると緑に戻る。
 - `sudo systemctl stop pivr180-capture` で止めると、Ctrl+C と同じくカメラとシリアルを解放してから終了する。この場合は起動し直さない。
 
@@ -151,6 +155,29 @@ sudo systemctl stop pivr180-capture
 ```sh
 sudo systemctl disable --now pivr180-capture
 ```
+
+## スマホ Web UI
+
+撮影ソフトは、スマホから操作するための Web UI も同じプロセスで配信する。設計の経緯は [ADR 0009](../docs/adr/0009-web-ui-in-capture-process-on-port-80.md) を参照。現在は画面の土台だけで、プレビュー・撮影設定・撮影一覧・シャットダウンは今後追加する。
+
+- 撮影ソフトを起動すると、カメラを開く前に Web サーバー（FastAPI + uvicorn）を別スレッドで起動する。左右の同期を待っている間も画面は開ける。終了時は、カメラとシリアルを解放した後に止める。
+- すべてのネットワークインターフェースの 80 番ポートで待ち受ける。スマホと Pi を同じネットワークにつなぎ、`http://pivr180.local` を開く。ホスト名を `pivr180` にする設定は #27 で行う。それまでは Pi のホスト名（`hostname` で確認できる）で `http://<ホスト名>.local` を開く。
+- 80 番ポートは、root でないユーザーでは通常使えない。systemd のサービスでは権限を与えている（[自動起動](#自動起動)）が、`uv run pivr180-capture` で手動で起動する場合は使えないため、`--web-port 8080` などを指定して `http://<ホスト名>.local:8080` を開く。
+- 待ち受けに失敗した場合（ポートを使えない、使用中など）は、エラーをログに出し、Web UI なしで撮影を続ける。ボタンでの撮影とシャットダウンはそのまま使える。
+
+### 画面の開発
+
+画面のソースは `web/` にある。素の HTML と TypeScript で書き、Vite でビルドする。ビルドした成果物は `src/pivr180_device/static/` に出力され、Python パッケージに同梱される。成果物はリポジトリにコミットするため、Pi に Node.js は不要。
+
+```sh
+cd web
+pnpm install
+pnpm test   # Vitest
+pnpm build  # 型チェックの後、src/pivr180_device/static/ にビルドする
+```
+
+- `web/` を変更したら `pnpm build` を実行し、`src/pivr180_device/static/` の変更も一緒にコミットする。CI はビルドし直した結果がコミット済みの成果物と一致するか確認し、一致しない場合は失敗する。
+- 画面の機能を足すときは、Python 側で `fastapi.APIRouter` を作り、`pivr180_device.web.create_app()` の `routers` に渡す。ルーターは静的ファイルより優先される。
 
 ## AtomS3 Lite のボタン
 
