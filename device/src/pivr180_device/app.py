@@ -7,6 +7,8 @@ from contextlib import AbstractContextManager, ExitStack
 from pathlib import Path
 from typing import TextIO
 
+from fastapi import FastAPI
+
 from pivr180_device.atoms3.base import SerialLink
 from pivr180_device.atoms3.pyserial import DEFAULT_PORT, open_serial_link
 from pivr180_device.button import ButtonShutter, Status
@@ -16,6 +18,7 @@ from pivr180_device.exposure import ExposurePreview, ExposureSettings, ExposureS
 from pivr180_device.power import power_off
 from pivr180_device.storage import DEFAULT_CAPTURE_ROOT, CaptureStorage
 from pivr180_device.sync import SyncedPair, capture_synced_pair
+from pivr180_device.web import create_app, serve
 
 logger = logging.getLogger(__name__)
 
@@ -25,10 +28,13 @@ EXIT_ERROR = 1
 EXIT_INTERRUPTED = 130
 SHUTTER_BUTTON = "button"
 SHUTTER_STDIN = "stdin"
+WEB_HOST = "0.0.0.0"
+DEFAULT_WEB_PORT = 80
 
 OpenPair = Callable[[int, int], AbstractContextManager[CameraPair]]
 OpenLink = Callable[[str], SerialLink]
 ShowStatus = Callable[[Status], None]
+ServeWeb = Callable[[FastAPI, str, int], AbstractContextManager[object]]
 
 
 def _ignore_status(status: Status) -> None:
@@ -139,6 +145,12 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         default=DEFAULT_PORT,
         help=f"AtomS3 Lite serial device path or glob (default: {DEFAULT_PORT})",
     )
+    parser.add_argument(
+        "--web-port",
+        type=int,
+        default=DEFAULT_WEB_PORT,
+        help=f"port to serve the phone web UI on (default: {DEFAULT_WEB_PORT})",
+    )
     return parser.parse_args(argv)
 
 
@@ -151,6 +163,7 @@ def main(
     shutdown: Callable[[], None] = power_off,
     clock: Callable[[], float] = time.monotonic,
     sleep: Callable[[float], None] = time.sleep,
+    serve_web: ServeWeb = serve,
 ) -> int:
     args = _parse_args(argv)
     logging.basicConfig(
@@ -161,6 +174,12 @@ def main(
     code = EXIT_OK
     try:
         with ExitStack() as stack:
+            try:
+                stack.enter_context(serve_web(create_app(), WEB_HOST, args.web_port))
+            except Exception:
+                # Not exiting: shooting with the button must keep working
+                # without the phone, e.g. when port 80 cannot be bound.
+                logger.exception("web UI is unavailable; shooting continues")
             triggers: Iterable[object]
             show: ShowStatus = _ignore_status
             if args.shutter == SHUTTER_BUTTON:
