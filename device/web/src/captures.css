@@ -1,0 +1,42 @@
+.captures {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.capture {
+  border-top: 1px solid #ccc;
+  padding: 12px 0;
+}
+
+.capture-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.capture-id {
+  color: #666;
+  font-size: 0.8em;
+}
+
+.capture-badge {
+  border-radius: 4px;
+  background: #fde68a;
+  padding: 0 6px;
+  font-size: 0.8em;
+}
+
+.capture-images {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 8px;
+}
+
+.capture-images img {
+  width: calc(50% - 2px);
+  height: auto;
+  background: #eee;
+}
