@@ -5,6 +5,7 @@ description = "pivr180 device software for Raspberry Pi 5"
 requires-python = ">=3.11"
 dependencies = [
     "fastapi>=0.162.7",
+    "pillow>=13.0.0",
     "pyserial>=3.5",
     "uvicorn>=0.54.0",
 ]
