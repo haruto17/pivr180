@@ -152,6 +152,58 @@ sudo systemctl stop pivr180-capture
 sudo systemctl disable --now pivr180-capture
 ```
 
+## ネットワーク
+
+登録済みの Wi-Fi が見つかればそこへ接続し、見つからなければ Pi 自身がアクセスポイント（SSID `pivr180`）になる。どちらの場合も `pivr180.local` で Pi にアクセスできる。
+
+切り替えには Raspberry Pi OS（Bookworm 以降）標準の NetworkManager を使う。NetworkManager は、利用できる接続のうち自動接続の優先度（`connection.autoconnect-priority`）が最も高いものへ自動で接続する。Wi-Fi のクライアントの接続はその SSID がスキャンで見つかったときだけ利用できるが、アクセスポイントの接続は常に利用できる。そこでアクセスポイントの接続を、登録済みの Wi-Fi（既定の 0）より低い優先度（-100）で用意している。
+
+1. 次のことを済ませておく。
+   - Wi-Fi の国（WLAN country）を設定する。Raspberry Pi Imager の OS カスタマイズで設定していればよい。未設定の場合は `sudo raspi-config` の Localisation Options → WLAN Country で設定する。
+   - 自宅などの Wi-Fi を登録する。Raspberry Pi Imager の OS カスタマイズで設定していればよい。追加する場合は次のコマンドを使う。
+
+     ```sh
+     sudo nmcli device wifi connect "<SSID>" password "<パスフレーズ>"
+     ```
+
+2. `device/` で次のスクリプトを実行する。`<パスフレーズ>` は、アクセスポイントに接続するときのパスフレーズ（8〜63 文字）に置き換える。パスフレーズはリポジトリには置かない。
+
+   ```sh
+   PIVR180_AP_PASSPHRASE='<パスフレーズ>' ./scripts/setup_network.sh
+   ```
+
+   スクリプトは次のことを行う。
+
+   - `raspi-config nonint do_hostname pivr180` でホスト名を `pivr180` にする。Raspberry Pi OS 標準の avahi-daemon が、`pivr180.local` の名前を mDNS で応答する。
+   - NetworkManager に、アクセスポイントの接続 `pivr180-ap` を追加する。既にある場合は削除してから追加し直すため、パスフレーズを変える場合はスクリプトを再実行する。
+     - SSID `pivr180`、WPA2（AES）、2.4GHz
+     - `ipv4.method shared`。Pi のアドレスは `10.42.0.1` になり、接続したスマホには DHCP でアドレスが配られる。
+     - 自動接続の優先度は -100
+   - 実行中の SSH が切れないよう、その場ではアクセスポイントにしない。
+
+3. `sudo reboot` で再起動する。
+
+切り替えは次のように動く。
+
+- 起動時や、接続していた Wi-Fi が切れたときに、登録済みの Wi-Fi が見つかればそこへ接続し、見つからなければアクセスポイントになる。
+- アクセスポイントになっている間は Wi-Fi をスキャンしないため、登録済みの Wi-Fi が届く場所へ戻っても自動では接続し直さない。再起動するか、次のコマンドで接続する。
+
+  ```sh
+  sudo nmcli connection up "<登録済みの Wi-Fi の接続名>"
+  ```
+
+現在の接続は次のコマンドで確認できる。
+
+```sh
+nmcli connection show --active
+```
+
+アクセスポイントへの切り替えをやめる場合は、接続を削除する。
+
+```sh
+sudo nmcli connection delete pivr180-ap
+```
+
 ## AtomS3 Lite のボタン
 
 AtomS3 Lite とは USB シリアルで通信する。メッセージの書式は [firmware/PROTOCOL.md](../firmware/PROTOCOL.md) を参照。
