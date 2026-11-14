@@ -175,7 +175,7 @@ sudo systemctl disable --now pivr180-capture
    スクリプトは次のことを行う。
 
    - `raspi-config nonint do_hostname pivr180` でホスト名を `pivr180` にする。Raspberry Pi OS 標準の avahi-daemon が、`pivr180.local` の名前を mDNS で応答する。
-   - NetworkManager に、アクセスポイントの接続 `pivr180-ap` を追加する。既にある場合は削除してから追加し直すため、パスフレーズを変える場合はスクリプトを再実行する。
+   - NetworkManager に、アクセスポイントの接続 `pivr180-ap` を追加する。既にある場合は、削除せずに設定を書き換える。パスフレーズを変える場合はスクリプトを再実行し、再起動すると反映される（アクセスポイントに接続して実行していても、その場では切れない）。
      - SSID `pivr180`、WPA2（AES）、2.4GHz
      - `ipv4.method shared`。Pi のアドレスは `10.42.0.1` になり、接続したスマホには DHCP でアドレスが配られる。
      - 自動接続の優先度は -100
