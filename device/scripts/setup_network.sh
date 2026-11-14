@@ -9,11 +9,9 @@ fi
 
 sudo raspi-config nonint do_hostname pivr180
 
-if nmcli connection show pivr180-ap > /dev/null 2>&1; then
-    sudo nmcli connection delete pivr180-ap
-fi
-# Not activated here: switching wlan0 to the access point would drop the SSH session running this script.
-sudo nmcli connection add type wifi ifname wlan0 con-name pivr180-ap ssid pivr180 \
+set -- \
+    connection.interface-name wlan0 \
+    802-11-wireless.ssid pivr180 \
     connection.autoconnect yes \
     connection.autoconnect-priority -100 \
     802-11-wireless.mode ap \
@@ -24,4 +22,11 @@ sudo nmcli connection add type wifi ifname wlan0 con-name pivr180-ap ssid pivr18
     wifi-sec.pairwise ccmp \
     wifi-sec.group ccmp \
     wifi-sec.psk "$passphrase"
-echo "Hostname is set to pivr180 and the pivr180-ap profile is added. Reboot to apply."
+# Not activated or reapplied here: switching wlan0 to the access point, or reapplying it, would drop the SSH session running this script.
+if nmcli connection show pivr180-ap > /dev/null 2>&1; then
+    # Not delete and add: deleting the active profile drops an SSH session over the access point before it is added back.
+    sudo nmcli connection modify pivr180-ap "$@"
+else
+    sudo nmcli connection add type wifi con-name pivr180-ap "$@"
+fi
+echo "Hostname is set to pivr180 and the pivr180-ap profile is saved. Reboot to apply."

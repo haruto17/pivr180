@@ -55,10 +55,22 @@ def setup(tmp_path: Path, *, ap_exists: bool = False) -> list[str]:
     return calls_log.read_text(encoding="utf-8").splitlines()
 
 
-def added_profile(calls: list[str]) -> str:
-    adds = [call for call in calls if call.startswith("sudo nmcli connection add ")]
-    assert len(adds) == 1
-    return adds[0]
+SAVE_COMMANDS = {
+    False: "sudo nmcli connection add type wifi con-name pivr180-ap ",
+    True: "sudo nmcli connection modify pivr180-ap ",
+}
+
+
+def saved_profile(calls: list[str], *, ap_exists: bool) -> str:
+    saves = [call for call in calls if call.startswith("sudo nmcli connection ")]
+    assert len(saves) == 1
+    assert saves[0].startswith(SAVE_COMMANDS[ap_exists])
+    return saves[0]
+
+
+both_cases = pytest.mark.parametrize(
+    "ap_exists", [False, True], ids=["new-profile", "existing-profile"]
+)
 
 
 def test_setup_sets_hostname_to_pivr180(tmp_path):
@@ -67,57 +79,57 @@ def test_setup_sets_hostname_to_pivr180(tmp_path):
     assert calls[0] == "sudo raspi-config nonint do_hostname pivr180"
 
 
-def test_setup_adds_access_point_profile_named_pivr180_on_wlan0(tmp_path):
-    profile = added_profile(setup(tmp_path))
+def test_setup_adds_access_point_profile_when_none_exists(tmp_path):
+    saved_profile(setup(tmp_path, ap_exists=False), ap_exists=False)
 
-    assert profile.startswith(
-        "sudo nmcli connection add type wifi ifname wlan0 con-name pivr180-ap "
-        "ssid pivr180 "
-    )
+
+def test_setup_modifies_existing_access_point_profile_in_place(tmp_path):
+    calls = setup(tmp_path, ap_exists=True)
+
+    saved_profile(calls, ap_exists=True)
+    assert not any(" connection delete " in call for call in calls)
+
+
+@both_cases
+def test_access_point_profile_broadcasts_pivr180_on_wlan0(tmp_path, ap_exists):
+    profile = saved_profile(setup(tmp_path, ap_exists=ap_exists), ap_exists=ap_exists)
+
+    assert " connection.interface-name wlan0 " in profile
+    assert " 802-11-wireless.ssid pivr180 " in profile
     assert " 802-11-wireless.mode ap " in profile
 
 
+@both_cases
 def test_access_point_autoconnects_below_default_priority_of_registered_wifi(
-    tmp_path,
+    tmp_path, ap_exists
 ):
-    profile = added_profile(setup(tmp_path))
+    profile = saved_profile(setup(tmp_path, ap_exists=ap_exists), ap_exists=ap_exists)
 
     assert " connection.autoconnect yes " in profile
     assert " connection.autoconnect-priority -100 " in profile
 
 
-def test_access_point_hands_out_addresses_to_clients(tmp_path):
-    profile = added_profile(setup(tmp_path))
+@both_cases
+def test_access_point_hands_out_addresses_to_clients(tmp_path, ap_exists):
+    profile = saved_profile(setup(tmp_path, ap_exists=ap_exists), ap_exists=ap_exists)
 
     assert " ipv4.method shared " in profile
 
 
-def test_access_point_uses_wpa2_with_passphrase_from_environment(tmp_path):
-    profile = added_profile(setup(tmp_path))
+@both_cases
+def test_access_point_uses_wpa2_with_passphrase_from_environment(tmp_path, ap_exists):
+    profile = saved_profile(setup(tmp_path, ap_exists=ap_exists), ap_exists=ap_exists)
 
     assert " wifi-sec.key-mgmt wpa-psk " in profile
     assert " wifi-sec.proto rsn " in profile
     assert profile.endswith(f" wifi-sec.psk {PASSPHRASE}")
 
 
-def test_setup_without_existing_profile_does_not_delete(tmp_path):
-    calls = setup(tmp_path, ap_exists=False)
+@both_cases
+def test_setup_does_not_activate_or_reapply_access_point(tmp_path, ap_exists):
+    calls = setup(tmp_path, ap_exists=ap_exists)
 
-    assert "sudo nmcli connection delete pivr180-ap" not in calls
-
-
-def test_setup_replaces_existing_access_point_profile(tmp_path):
-    calls = setup(tmp_path, ap_exists=True)
-
-    delete = calls.index("sudo nmcli connection delete pivr180-ap")
-    add = calls.index(added_profile(calls))
-    assert delete < add
-
-
-def test_setup_does_not_activate_access_point(tmp_path):
-    calls = setup(tmp_path)
-
-    assert not any(" connection up " in call for call in calls)
+    assert not any(" up " in call or " reapply " in call for call in calls)
 
 
 @pytest.mark.parametrize("passphrase", [None, "", "1234567", "x" * 64])
