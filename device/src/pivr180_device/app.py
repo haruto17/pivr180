@@ -14,6 +14,7 @@ from pivr180_device.atoms3.pyserial import DEFAULT_PORT, open_serial_link
 from pivr180_device.button import ButtonShutter, Status
 from pivr180_device.camera.base import CameraPair
 from pivr180_device.camera.picamera2 import open_camera_pair
+from pivr180_device.captures_api import captures_router
 from pivr180_device.exposure import ExposurePreview, ExposureSettings, ExposureSync
 from pivr180_device.power import power_off
 from pivr180_device.storage import DEFAULT_CAPTURE_ROOT, CaptureStorage
@@ -175,7 +176,8 @@ def main(
     try:
         with ExitStack() as stack:
             try:
-                stack.enter_context(serve_web(create_app(), WEB_HOST, args.web_port))
+                app = create_app([captures_router(storage)])
+                stack.enter_context(serve_web(app, WEB_HOST, args.web_port))
             except Exception:
                 # Not exiting: shooting with the button must keep working
                 # without the phone, e.g. when port 80 cannot be bound.
