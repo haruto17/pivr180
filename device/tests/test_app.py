@@ -10,17 +10,20 @@ from dataclasses import replace
 from datetime import UTC, datetime
 from importlib.metadata import entry_points
 from pathlib import Path
+from typing import Any
 
 import pytest
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
 
 from pivr180_device.app import (
     EXIT_ERROR,
     EXIT_INTERRUPTED,
     EXIT_OK,
-    main,
     run,
     stdin_triggers,
 )
+from pivr180_device.app import main as capture_main
 from pivr180_device.atoms3.fake import FakeClock, FakeSerialLink
 from pivr180_device.atoms3.pyserial import DEFAULT_PORT
 from pivr180_device.button import Status
@@ -615,6 +618,30 @@ def test_stdin_triggers_shoot_per_line_until_quit_or_eof(text: str, count: int):
     assert len(list(stdin_triggers(io.StringIO(text)))) == count
 
 
+class ServeWebRecorder:
+    def __init__(self, *observed: Callable[[], object]) -> None:
+        self._observed = observed
+        self.served: list[tuple[FastAPI, str, int]] = []
+        self.stopped_while: list[tuple[object, ...]] = []
+        self.error: Exception | None = None
+
+    @contextmanager
+    def __call__(self, app: FastAPI, host: str, port: int) -> Iterator[None]:
+        self.served.append((app, host, port))
+        if self.error is not None:
+            raise self.error
+        try:
+            yield
+        finally:
+            self.stopped_while.append(tuple(observe() for observe in self._observed))
+
+
+def main(argv: list[str] | None = None, **kwargs: Any) -> int:
+    # Not the real server: binding port 80 needs privileges the tests lack.
+    kwargs.setdefault("serve_web", ServeWebRecorder())
+    return capture_main(argv, **kwargs)
+
+
 class OpenPairRecorder:
     def __init__(self, pair: CameraPair) -> None:
         self.pair = pair
@@ -1069,6 +1096,106 @@ def test_main_with_stdin_shutter_never_opens_the_button_or_powers_off(
     assert code == EXIT_OK
     assert rig.opened_ports == []
     assert shutdown.calls == []
+
+
+def test_main_serves_the_web_ui_on_port_80_of_every_interface(
+    pair: CameraPair, tmp_path: Path
+):
+    serve_web = ServeWebRecorder()
+
+    code = main(
+        ["--shutter", "stdin", "--captures-dir", str(tmp_path / "captures")],
+        open_pair=OpenPairRecorder(pair),
+        stdin=io.StringIO("q\n"),
+        serve_web=serve_web,
+    )
+
+    assert code == EXIT_OK
+    [(app, host, port)] = serve_web.served
+    assert (host, port) == ("0.0.0.0", 80)
+    response = TestClient(app).get("/")
+    assert response.status_code == 200
+    assert '<main id="app">' in response.text
+
+
+def test_main_serves_the_web_ui_on_the_given_port(pair: CameraPair, tmp_path: Path):
+    serve_web = ServeWebRecorder()
+
+    main(
+        [
+            "--shutter",
+            "stdin",
+            "--captures-dir",
+            str(tmp_path / "captures"),
+            "--web-port",
+            "8080",
+        ],
+        open_pair=OpenPairRecorder(pair),
+        stdin=io.StringIO("q\n"),
+        serve_web=serve_web,
+    )
+
+    [(_, _, port)] = serve_web.served
+    assert port == 8080
+
+
+def test_main_stops_the_web_ui_after_the_cameras_and_button_before_power_off(
+    pair: CameraPair, tmp_path: Path
+):
+    open_pair = OpenPairRecorder(pair)
+    rig = ButtonRig((0.0, "press"), (60.0, "release"))
+    shutdown = ShutdownRecorder(lambda: list(serve_web.stopped_while))
+    serve_web = ServeWebRecorder(lambda: open_pair.closed, lambda: rig.link.closed)
+
+    code = main(
+        ["--captures-dir", str(tmp_path / "captures")],
+        open_pair=open_pair,
+        open_link=rig.open_link,
+        shutdown=shutdown,
+        clock=rig.clock,
+        sleep=rig.clock.sleep,
+        serve_web=serve_web,
+    )
+
+    assert code == EXIT_OK
+    assert serve_web.stopped_while == [(True, True)]
+    assert shutdown.calls == [([(True, True)],)]
+
+
+def test_main_stops_the_web_ui_on_ctrl_c(pair: CameraPair, tmp_path: Path):
+    serve_web = ServeWebRecorder()
+
+    code = main(
+        ["--shutter", "stdin", "--captures-dir", str(tmp_path / "captures")],
+        open_pair=OpenPairRecorder(pair),
+        stdin=InterruptingStdin(),
+        serve_web=serve_web,
+    )
+
+    assert code == EXIT_INTERRUPTED
+    assert len(serve_web.stopped_while) == 1
+
+
+def test_main_keeps_shooting_when_the_web_ui_cannot_start(
+    pair: CameraPair, tmp_path: Path, caplog: pytest.LogCaptureFixture
+):
+    serve_web = ServeWebRecorder()
+    serve_web.error = RuntimeError("web server failed to listen on 0.0.0.0:80")
+    root = tmp_path / "captures"
+
+    with caplog.at_level(logging.ERROR, logger="pivr180_device.app"):
+        code = main(
+            ["--shutter", "stdin", "--captures-dir", str(root)],
+            open_pair=OpenPairRecorder(pair),
+            stdin=io.StringIO("\nq\n"),
+            serve_web=serve_web,
+        )
+
+    assert code == EXIT_OK
+    assert len(list(root.iterdir())) == 1
+    [failure] = caplog.records
+    assert "web UI is unavailable" in failure.getMessage()
+    assert "0.0.0.0:80" in str(failure.exc_info[1])
 
 
 def test_capture_command_is_installed_as_a_console_script():
