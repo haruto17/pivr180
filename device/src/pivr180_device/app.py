@@ -16,6 +16,8 @@ from pivr180_device.camera.base import CameraPair
 from pivr180_device.camera.picamera2 import open_camera_pair
 from pivr180_device.exposure import ExposurePreview, ExposureSettings, ExposureSync
 from pivr180_device.power import power_off
+from pivr180_device.preview import preview_router
+from pivr180_device.slot import CameraSlot, LiveCameras
 from pivr180_device.storage import DEFAULT_CAPTURE_ROOT, CaptureStorage
 from pivr180_device.sync import SyncedPair, capture_synced_pair
 from pivr180_device.web import create_app, serve
@@ -63,7 +65,10 @@ def run(
     storage: CaptureStorage,
     triggers: Iterable[object],
     show: ShowStatus = _ignore_status,
+    slot: CameraSlot | None = None,
 ) -> None:
+    if slot is None:
+        slot = CameraSlot()
     pair.start()
     try:
         # Not left to the first preview frame or shot: waiting for SyncReady on
@@ -72,7 +77,10 @@ def run(
         pair.left.capture_metadata()
         pair.right.capture_metadata()
         exposure = ExposureSync(pair)
-        with ExposurePreview(exposure, on_error=lambda: show(Status.ERROR)) as preview:
+        with (
+            ExposurePreview(exposure, on_error=lambda: show(Status.ERROR)) as preview,
+            slot.attach(LiveCameras(pair=pair, exposure=exposure)),
+        ):
             logger.info("ready to shoot")
             show(Status.IDLE)
             # Not trusting idle alone: the preview may have died before it was
@@ -170,12 +178,14 @@ def main(
         level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s"
     )
     storage = CaptureStorage(args.captures_dir)
+    slot = CameraSlot()
     shutter: ButtonShutter | None = None
     code = EXIT_OK
     try:
         with ExitStack() as stack:
             try:
-                stack.enter_context(serve_web(create_app(), WEB_HOST, args.web_port))
+                app = create_app([preview_router(slot)])
+                stack.enter_context(serve_web(app, WEB_HOST, args.web_port))
             except Exception:
                 # Not exiting: shooting with the button must keep working
                 # without the phone, e.g. when port 80 cannot be bound.
@@ -194,7 +204,7 @@ def main(
                 triggers = stdin_triggers(sys.stdin if stdin is None else stdin)
             try:
                 with open_pair(args.left, args.right) as pair:
-                    run(pair, storage, triggers, show)
+                    run(pair, storage, triggers, show, slot)
             except Exception:
                 show(Status.ERROR)
                 raise
