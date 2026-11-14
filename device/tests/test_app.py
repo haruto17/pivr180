@@ -1202,3 +1202,170 @@ def test_capture_command_is_installed_as_a_console_script():
     [script] = entry_points(group="console_scripts", name="pivr180-capture")
 
     assert script.value == "pivr180_device.app:main"
+
+
+def saved(root: Path) -> list[Path]:
+    return sorted(root.iterdir()) if root.exists() else []
+
+
+class WebShutdown:
+    def __init__(self, serve_web: ServeWebRecorder) -> None:
+        self._serve_web = serve_web
+        self.responses: list[int] = []
+
+    def __call__(self) -> None:
+        [(app, _, _)] = self._serve_web.served
+        self.responses.append(TestClient(app).post("/api/shutdown").status_code)
+
+
+class WaitingStdin(io.StringIO):
+    def __init__(self, on_wait: Callable[[], None]) -> None:
+        super().__init__()
+        self._on_wait = on_wait
+        self.release = threading.Event()
+
+    def __iter__(self) -> Iterator[str]:
+        yield "\n"
+        self._on_wait()
+        # Not waiting forever: without a way out, a broken request would hang the
+        # test instead of failing it.
+        self.release.wait(timeout=5.0)
+
+
+def test_main_powers_off_on_a_web_request_after_releasing_cameras_and_button(
+    pair: CameraPair, left: AutoCamera, right: AutoCamera, tmp_path: Path
+):
+    open_pair = OpenPairRecorder(pair)
+    root = tmp_path / "captures"
+    serve_web = ServeWebRecorder()
+    web_shutdown = WebShutdown(serve_web)
+    rig = ButtonRig(
+        (0.0, "press"),
+        (0.5, "release"),
+        (1.0, lambda: wait_for(lambda: len(saved(root)) == 1)),
+        (1.5, web_shutdown),
+        (60.0, "hello"),
+    )
+    shutdown = ShutdownRecorder(
+        lambda: open_pair.closed,
+        lambda: rig.link.closed,
+        lambda: left.started or right.started,
+        lambda: preview_threads(),
+        lambda: len(saved(root)),
+    )
+
+    code = main(
+        ["--captures-dir", str(root)],
+        open_pair=open_pair,
+        open_link=rig.open_link,
+        shutdown=shutdown,
+        clock=rig.clock,
+        sleep=rig.clock.sleep,
+        serve_web=serve_web,
+    )
+
+    assert code == EXIT_OK
+    assert web_shutdown.responses == [202]
+    assert shutdown.calls == [(True, True, False, [], 1)]
+
+
+def test_main_saves_the_capture_under_way_then_powers_off_on_a_web_request(
+    pair: CameraPair, left: AutoCamera, tmp_path: Path
+):
+    open_pair = OpenPairRecorder(pair)
+    root = tmp_path / "captures"
+    serve_web = ServeWebRecorder()
+    web_shutdown = WebShutdown(serve_web)
+    rig = ButtonRig(
+        (0.0, "press"),
+        (0.5, "release"),
+        (1.0, "press"),
+        (1.5, "release"),
+        (60.0, "hello"),
+    )
+    capture_frame = left.capture_frame
+
+    def capture_frame_requesting_shutdown() -> FakeFrame:
+        if not web_shutdown.responses:
+            assert wait_for(lambda: rig.clock.now >= 1.5)
+            web_shutdown()
+        return capture_frame()
+
+    left.capture_frame = capture_frame_requesting_shutdown
+    shutdown = ShutdownRecorder(
+        lambda: open_pair.closed,
+        lambda: rig.link.closed,
+        lambda: len(saved(root)),
+    )
+
+    code = main(
+        ["--captures-dir", str(root)],
+        open_pair=open_pair,
+        open_link=rig.open_link,
+        shutdown=shutdown,
+        clock=rig.clock,
+        sleep=rig.clock.sleep,
+        serve_web=serve_web,
+    )
+
+    assert code == EXIT_OK
+    assert web_shutdown.responses == [202]
+    assert shutdown.calls == [(True, True, 1)]
+
+
+def test_main_with_stdin_shutter_powers_off_on_a_web_request_while_stdin_waits(
+    pair: CameraPair, tmp_path: Path
+):
+    open_pair = OpenPairRecorder(pair)
+    root = tmp_path / "captures"
+    serve_web = ServeWebRecorder()
+    web_shutdown = WebShutdown(serve_web)
+    stdin = WaitingStdin(web_shutdown)
+    shutdown = ShutdownRecorder(lambda: open_pair.closed, lambda: len(saved(root)))
+
+    try:
+        code = main(
+            ["--shutter", "stdin", "--captures-dir", str(root)],
+            open_pair=open_pair,
+            stdin=stdin,
+            shutdown=shutdown,
+            serve_web=serve_web,
+        )
+    finally:
+        stdin.release.set()
+
+    assert code == EXIT_OK
+    assert web_shutdown.responses == [202]
+    assert shutdown.calls == [(True, 1)]
+
+
+def test_main_powers_off_on_a_web_request_even_when_the_capture_fails(
+    pair: CameraPair, left: AutoCamera, right: AutoCamera, tmp_path: Path
+):
+    serve_web = ServeWebRecorder()
+    web_shutdown = WebShutdown(serve_web)
+    capture_frame = left.capture_frame
+
+    def capture_frame_then_reject_resume() -> FakeFrame:
+        web_shutdown()
+        right.rejected_controls = Controls(AeEnable=False, AwbEnable=False)
+        return capture_frame()
+
+    left.capture_frame = capture_frame_then_reject_resume
+    open_pair = OpenPairRecorder(pair)
+    stdin = WaitingStdin(lambda: None)
+    shutdown = ShutdownRecorder(lambda: open_pair.closed)
+
+    try:
+        code = main(
+            ["--shutter", "stdin", "--captures-dir", str(tmp_path / "captures")],
+            open_pair=open_pair,
+            stdin=stdin,
+            shutdown=shutdown,
+            serve_web=serve_web,
+        )
+    finally:
+        stdin.release.set()
+
+    assert code == EXIT_ERROR
+    assert shutdown.calls == [(True,)]
