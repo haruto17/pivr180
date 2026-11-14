@@ -108,6 +108,12 @@ def test_installed_unit_stops_like_ctrl_c(tmp_path):
     assert "SuccessExitStatus=130\n" in unit
 
 
+def test_installed_unit_may_bind_port_80_for_the_web_ui(tmp_path):
+    _, _, unit = install(tmp_path)
+
+    assert "AmbientCapabilities=CAP_NET_BIND_SERVICE\n" in unit
+
+
 def test_install_without_venv_fails_without_calling_sudo(tmp_path):
     project = make_project(tmp_path, with_venv=False)
 
