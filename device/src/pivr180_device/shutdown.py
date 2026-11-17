@@ -2,10 +2,13 @@ import queue
 import threading
 from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass
+from typing import Annotated
 
-from fastapi import APIRouter, status
+from fastapi import APIRouter, Header, HTTPException, status
 
 SHUTDOWN_PATH = "/api/shutdown"
+SHUTDOWN_HEADER = "X-Pivr180-Request"
+SHUTDOWN_HEADER_VALUE = "shutdown"
 
 
 @dataclass(frozen=True)
@@ -73,7 +76,15 @@ def shutdown_router(request_shutdown: Callable[[], None]) -> APIRouter:
     router = APIRouter()
 
     @router.post(SHUTDOWN_PATH, status_code=status.HTTP_202_ACCEPTED)
-    def shutdown() -> dict[str, str]:
+    def shutdown(
+        x_pivr180_request: Annotated[str | None, Header()] = None,
+    ) -> dict[str, str]:
+        # Not an Origin check: the phone reaches the Pi as pivr180.local or by
+        # IP, so comparing Origin with Host is fragile. A form cannot send a
+        # custom header, and a cross-origin fetch with one needs a CORS
+        # preflight, which this server never allows.
+        if x_pivr180_request != SHUTDOWN_HEADER_VALUE:
+            raise HTTPException(status.HTTP_403_FORBIDDEN)
         # Not powering off here: the capture under way has to end and the
         # cameras and the button have to be released first, which main does.
         request_shutdown()

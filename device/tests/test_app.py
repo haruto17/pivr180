@@ -29,6 +29,7 @@ from pivr180_device.atoms3.pyserial import DEFAULT_PORT
 from pivr180_device.button import Status
 from pivr180_device.camera import CameraPair, Controls, FrameMetadata
 from pivr180_device.camera.fake import FakeCamera, FakeFrame
+from pivr180_device.shutdown import SHUTDOWN_HEADER, SHUTDOWN_HEADER_VALUE
 from pivr180_device.storage import CaptureStorage
 
 AUTO = FrameMetadata(
@@ -1236,7 +1237,10 @@ class WebShutdown:
 
     def __call__(self) -> None:
         [(app, _, _)] = self._serve_web.served
-        self.responses.append(TestClient(app).post("/api/shutdown").status_code)
+        response = TestClient(app).post(
+            "/api/shutdown", headers={SHUTDOWN_HEADER: SHUTDOWN_HEADER_VALUE}
+        )
+        self.responses.append(response.status_code)
 
 
 class WaitingStdin(io.StringIO):

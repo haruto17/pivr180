@@ -5,7 +5,12 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from pivr180_device.shutdown import ShutdownRequest, shutdown_router
+from pivr180_device.shutdown import (
+    SHUTDOWN_HEADER,
+    SHUTDOWN_HEADER_VALUE,
+    ShutdownRequest,
+    shutdown_router,
+)
 
 
 class BlockingTriggers:
@@ -112,11 +117,33 @@ def client_for(recorder: RequestRecorder) -> TestClient:
 def test_post_requests_a_shutdown_and_accepts():
     recorder = RequestRecorder()
 
-    response = client_for(recorder).post("/api/shutdown")
+    response = client_for(recorder).post(
+        "/api/shutdown", headers={SHUTDOWN_HEADER: SHUTDOWN_HEADER_VALUE}
+    )
 
     assert response.status_code == 202
     assert response.json() == {"status": "shutting down"}
     assert recorder.calls == 1
+
+
+def test_post_without_the_request_header_is_forbidden():
+    recorder = RequestRecorder()
+
+    response = client_for(recorder).post("/api/shutdown")
+
+    assert response.status_code == 403
+    assert recorder.calls == 0
+
+
+def test_post_with_a_wrong_request_header_is_forbidden():
+    recorder = RequestRecorder()
+
+    response = client_for(recorder).post(
+        "/api/shutdown", headers={SHUTDOWN_HEADER: "capture"}
+    )
+
+    assert response.status_code == 403
+    assert recorder.calls == 0
 
 
 def test_get_does_not_request_a_shutdown():
