@@ -1,4 +1,5 @@
 export const SHUTDOWN_URL = '/api/shutdown'
+export const SHUTDOWN_HEADERS = { 'X-Pivr180-Request': 'shutdown' }
 export const CONFIRM_MESSAGE =
   'pivr180 をシャットダウンしますか？撮影中の場合は、その撮影を保存してから電源を切ります。'
 
@@ -39,7 +40,10 @@ async function requestShutdown(
   button.disabled = true
   status.textContent = 'シャットダウンを要求しています…'
   try {
-    const response = await deps.fetch(SHUTDOWN_URL, { method: 'POST' })
+    const response = await deps.fetch(SHUTDOWN_URL, {
+      method: 'POST',
+      headers: SHUTDOWN_HEADERS,
+    })
     if (!response.ok) {
       throw new Error(`HTTP ${response.status}`)
     }

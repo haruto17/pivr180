@@ -26,7 +26,10 @@ describe('createShutdownSection', () => {
     button.click()
 
     expect(deps.confirm).toHaveBeenCalledWith(CONFIRM_MESSAGE)
-    expect(deps.fetch).toHaveBeenCalledWith(SHUTDOWN_URL, { method: 'POST' })
+    expect(deps.fetch).toHaveBeenCalledWith(SHUTDOWN_URL, {
+      method: 'POST',
+      headers: { 'X-Pivr180-Request': 'shutdown' },
+    })
     await vi.waitFor(() => expect(status.textContent).toContain('受け付けました'))
     expect(button.disabled).toBe(true)
   })
