@@ -1139,6 +1139,27 @@ def test_main_serves_the_web_ui_on_the_given_port(pair: CameraPair, tmp_path: Pa
     assert port == 8080
 
 
+def test_main_web_ui_lists_and_deletes_captures_in_the_captures_dir(
+    pair: CameraPair, tmp_path: Path
+):
+    serve_web = ServeWebRecorder()
+    root = tmp_path / "captures"
+
+    main(
+        ["--shutter", "stdin", "--captures-dir", str(root)],
+        open_pair=OpenPairRecorder(pair),
+        stdin=io.StringIO("\nq\n"),
+        serve_web=serve_web,
+    )
+
+    [(app, _, _)] = serve_web.served
+    client = TestClient(app)
+    [capture] = client.get("/api/captures").json()
+    assert capture["id"] == next(root.iterdir()).name
+    assert client.delete(f"/api/captures/{capture['id']}").status_code == 204
+    assert list(root.iterdir()) == []
+
+
 def test_main_stops_the_web_ui_after_the_cameras_and_button_before_power_off(
     pair: CameraPair, tmp_path: Path
 ):
