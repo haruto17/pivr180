@@ -22,7 +22,7 @@ pub fn rsync_args(source: &str, dest: &Path) -> Vec<OsString> {
         dest.push("/");
     }
     // No --delete / --remove-source-files: the Pi keeps its captures after import.
-    // No --itemize-changes: openrsync does not accept it, while --out-format works on both openrsync and GNU rsync.
+    // Not --itemize-changes: each line would carry a change-code prefix to strip, while --out-format=%n prints bare paths on both openrsync and GNU rsync.
     vec![
         "-a".into(),
         "-e".into(),
