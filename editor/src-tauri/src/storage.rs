@@ -6,9 +6,17 @@ use std::sync::{Mutex, PoisonError};
 
 static CHANGE_ROOT_LOCK: Mutex<()> = Mutex::new(());
 
+pub const DEFAULT_HOST: &str = "pivr180.local";
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StorageSettings {
     pub root: PathBuf,
+    #[serde(default = "default_host")]
+    pub host: String,
+}
+
+fn default_host() -> String {
+    DEFAULT_HOST.to_string()
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -22,6 +30,7 @@ impl StorageSettings {
     pub fn default_for(home: &Path) -> Self {
         Self {
             root: home.join("Pictures").join("pivr180"),
+            host: default_host(),
         }
     }
 
@@ -60,7 +69,7 @@ impl StorageSettings {
         fs::rename(&tmp, path)
     }
 
-    pub fn change_root(root: PathBuf, path: &Path) -> io::Result<Self> {
+    pub fn change_root(root: PathBuf, path: &Path, home: &Path) -> io::Result<Self> {
         if !root.is_absolute() {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
@@ -70,9 +79,35 @@ impl StorageSettings {
         let _guard = CHANGE_ROOT_LOCK
             .lock()
             .unwrap_or_else(PoisonError::into_inner);
-        let settings = Self { root };
+        let settings = Self {
+            root,
+            ..Self::load(path, home)?
+        };
         fs::create_dir_all(settings.captures_dir())?;
         fs::create_dir_all(settings.exports_dir())?;
+        settings.save(path)?;
+        Ok(settings)
+    }
+
+    pub fn change_host(host: &str, path: &Path, home: &Path) -> io::Result<Self> {
+        let host = host.trim();
+        // Not passed through as-is: a leading '-' would be parsed as an rsync option, and whitespace or ':' breaks the host:path source.
+        if host.is_empty()
+            || host.starts_with('-')
+            || host.contains(|c: char| c.is_whitespace() || c == ':' || c == '/')
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("接続先が不正です: {host:?}"),
+            ));
+        }
+        let _guard = CHANGE_ROOT_LOCK
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let settings = Self {
+            host: host.to_string(),
+            ..Self::load(path, home)?
+        };
         settings.save(path)?;
         Ok(settings)
     }
@@ -96,6 +131,7 @@ mod tests {
     fn captures_and_exports_live_under_root() {
         let settings = StorageSettings {
             root: PathBuf::from("/data/pivr180"),
+            host: DEFAULT_HOST.to_string(),
         };
         assert_eq!(
             settings.paths(),
@@ -125,6 +161,7 @@ mod tests {
         let path = dir.path().join("config").join("settings.json");
         let settings = StorageSettings {
             root: PathBuf::from("/Volumes/ext/pivr180"),
+            host: DEFAULT_HOST.to_string(),
         };
         settings.save(&path).unwrap();
         assert_eq!(
@@ -139,11 +176,13 @@ mod tests {
         let path = dir.path().join("settings.json");
         StorageSettings {
             root: PathBuf::from("/old/pivr180"),
+            host: DEFAULT_HOST.to_string(),
         }
         .save(&path)
         .unwrap();
         let settings = StorageSettings {
             root: PathBuf::from("/new/pivr180"),
+            host: DEFAULT_HOST.to_string(),
         };
         settings.save(&path).unwrap();
         assert_eq!(
@@ -161,7 +200,12 @@ mod tests {
     fn change_root_rejects_relative_path() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("settings.json");
-        let err = StorageSettings::change_root(PathBuf::from("relative/dir"), &path).unwrap_err();
+        let err = StorageSettings::change_root(
+            PathBuf::from("relative/dir"),
+            &path,
+            Path::new("/home/me"),
+        )
+        .unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
         assert!(!path.exists());
     }
@@ -171,7 +215,8 @@ mod tests {
         let dir = tempdir().unwrap();
         let path = dir.path().join("settings.json");
         let root = dir.path().join("library");
-        let settings = StorageSettings::change_root(root.clone(), &path).unwrap();
+        let settings =
+            StorageSettings::change_root(root.clone(), &path, Path::new("/home/me")).unwrap();
         assert!(root.join("captures").is_dir());
         assert!(root.join("exports").is_dir());
         assert_eq!(
@@ -190,11 +235,84 @@ mod tests {
         std::thread::scope(|scope| {
             for root in &roots {
                 let path = &path;
-                scope.spawn(move || StorageSettings::change_root(root.clone(), path).unwrap());
+                scope.spawn(move || {
+                    StorageSettings::change_root(root.clone(), path, Path::new("/home/me")).unwrap()
+                });
             }
         });
         let saved = StorageSettings::load(&path, Path::new("/home/me")).unwrap();
         assert!(roots.contains(&saved.root));
         assert!(!path.with_extension("json.tmp").exists());
+    }
+
+    #[test]
+    fn default_host_is_pivr180_local() {
+        let settings = StorageSettings::default_for(Path::new("/home/me"));
+        assert_eq!(settings.host, "pivr180.local");
+    }
+
+    #[test]
+    fn settings_saved_before_host_existed_load_with_default_host() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        fs::write(&path, r#"{"root": "/Volumes/ext/pivr180"}"#).unwrap();
+        assert_eq!(
+            StorageSettings::load(&path, Path::new("/home/me")).unwrap(),
+            StorageSettings {
+                root: PathBuf::from("/Volumes/ext/pivr180"),
+                host: "pivr180.local".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn change_host_saves_host_and_keeps_root() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        let root = dir.path().join("library");
+        StorageSettings::change_root(root.clone(), &path, Path::new("/home/me")).unwrap();
+        let settings =
+            StorageSettings::change_host(" pi@pivr180.local ", &path, Path::new("/home/me"))
+                .unwrap();
+        assert_eq!(
+            settings,
+            StorageSettings {
+                root,
+                host: "pi@pivr180.local".to_string(),
+            }
+        );
+        assert_eq!(
+            StorageSettings::load(&path, Path::new("/home/me")).unwrap(),
+            settings
+        );
+    }
+
+    #[test]
+    fn change_root_keeps_host() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        StorageSettings::change_host("raspberrypi.local", &path, Path::new("/home/me")).unwrap();
+        let settings =
+            StorageSettings::change_root(dir.path().join("library"), &path, Path::new("/home/me"))
+                .unwrap();
+        assert_eq!(settings.host, "raspberrypi.local");
+    }
+
+    #[test]
+    fn change_host_rejects_values_rsync_would_misread() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        for host in [
+            "",
+            "  ",
+            "-oProxyCommand=x",
+            "pi local",
+            "pivr180.local:/etc",
+            "a/b",
+        ] {
+            let err = StorageSettings::change_host(host, &path, Path::new("/home/me")).unwrap_err();
+            assert_eq!(err.kind(), io::ErrorKind::InvalidInput, "{host:?}");
+        }
+        assert!(!path.exists());
     }
 }
