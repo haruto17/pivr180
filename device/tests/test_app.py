@@ -30,6 +30,7 @@ from pivr180_device.atoms3.pyserial import DEFAULT_PORT
 from pivr180_device.button import Status
 from pivr180_device.camera import CameraPair, Controls, FrameMetadata
 from pivr180_device.camera.fake import FakeCamera, FakeFrame
+from pivr180_device.camera_settings import SETTINGS_PATH
 from pivr180_device.exposure import ExposureSync
 from pivr180_device.preview import PREVIEW_PATH
 from pivr180_device.shutdown import SHUTDOWN_HEADER, SHUTDOWN_HEADER_VALUE
@@ -1296,6 +1297,49 @@ def test_main_serves_the_live_preview_only_while_ready_to_shoot(
     assert stdin.first_chunk.startswith(b"--frame\r\n")
     [(app, _, _)] = serve_web.served
     assert TestClient(app).get(PREVIEW_PATH).status_code == 503
+
+
+CHANGED_SETTINGS = {"exposure_value": 1.0, "white_balance": "cloudy", "contrast": 0.5}
+
+
+class SettingsChangingStdin(io.StringIO):
+    def __init__(self, serve_web: ServeWebRecorder) -> None:
+        super().__init__()
+        self.serve_web = serve_web
+        self.status: int | None = None
+
+    def __iter__(self) -> Iterator[str]:
+        [(app, _, _)] = self.serve_web.served
+        response = TestClient(app).put(SETTINGS_PATH, json=CHANGED_SETTINGS)
+        self.status = response.status_code
+        yield "\n"
+        yield "q\n"
+
+
+def test_main_web_ui_changes_the_settings_of_both_cameras_while_ready_to_shoot(
+    pair: CameraPair, left: AutoCamera, right: AutoCamera, tmp_path: Path
+):
+    serve_web = ServeWebRecorder()
+    stdin = SettingsChangingStdin(serve_web)
+
+    code = main(
+        ["--shutter", "stdin", "--captures-dir", str(tmp_path / "captures")],
+        open_pair=OpenPairRecorder(pair),
+        stdin=stdin,
+        serve_web=serve_web,
+    )
+
+    assert code == EXIT_OK
+    assert stdin.status == 200
+    changed = {"ExposureValue": 1.0, "AwbMode": 6, "Contrast": 0.5}
+    for camera in (left, right):
+        assert camera.captured_with
+        for captured_with in camera.captured_with:
+            assert changed.items() <= captured_with.items()
+    [(app, _, _)] = serve_web.served
+    client = TestClient(app)
+    assert client.get(SETTINGS_PATH).json() == CHANGED_SETTINGS
+    assert client.put(SETTINGS_PATH, json=CHANGED_SETTINGS).status_code == 503
 
 
 def test_main_keeps_shooting_when_the_web_ui_cannot_start(
