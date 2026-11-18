@@ -51,7 +51,10 @@ impl StorageSettings {
             fs::create_dir_all(parent)?;
         }
         let content = serde_json::to_string_pretty(self).map_err(io::Error::other)?;
-        fs::write(path, content)
+        // Not fs::write(path): it truncates first, so a failed write would destroy the previous settings.
+        let tmp = path.with_extension("json.tmp");
+        fs::write(&tmp, content)?;
+        fs::rename(&tmp, path)
     }
 
     pub fn change_root(root: PathBuf, path: &Path) -> io::Result<Self> {
@@ -122,6 +125,30 @@ mod tests {
             StorageSettings::load(&path, Path::new("/home/me")).unwrap(),
             settings
         );
+    }
+
+    #[test]
+    fn saving_over_existing_settings_replaces_them_without_leaving_temp_file() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        StorageSettings {
+            root: PathBuf::from("/old/pivr180"),
+        }
+        .save(&path)
+        .unwrap();
+        let settings = StorageSettings {
+            root: PathBuf::from("/new/pivr180"),
+        };
+        settings.save(&path).unwrap();
+        assert_eq!(
+            StorageSettings::load(&path, Path::new("/home/me")).unwrap(),
+            settings
+        );
+        let entries: Vec<_> = fs::read_dir(dir.path())
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect();
+        assert_eq!(entries, vec!["settings.json"]);
     }
 
     #[test]
