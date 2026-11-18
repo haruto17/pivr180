@@ -1,4 +1,5 @@
 import { renderApp } from './app'
+import { renderCaptures } from './captures'
 import { renderPreview } from './preview'
 
 const root = document.querySelector<HTMLElement>('#app')
@@ -9,3 +10,7 @@ renderApp(root)
 const preview = document.createElement('section')
 root.append(preview)
 renderPreview(preview)
+
+const captures = document.createElement('section')
+root.append(captures)
+void renderCaptures(captures)

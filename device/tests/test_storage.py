@@ -1,4 +1,5 @@
 import json
+import threading
 from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 
@@ -11,6 +12,7 @@ from pivr180_device.storage import (
     DEFAULT_CAPTURE_ROOT,
     JPEG_QUALITY,
     STILL_SIZE,
+    CaptureNotFoundError,
     CaptureSaveError,
     CaptureStorage,
 )
@@ -348,3 +350,127 @@ def test_meta_that_is_not_valid_json_saves_nothing(tmp_path):
     assert left.saves == []
     assert right.saves == []
     assert list(tmp_path.iterdir()) == []
+
+
+def test_list_captures_returns_capture_directories_newest_first(tmp_path):
+    for name in ["20261107-123456-001", "20261108-000000-000", "20261107-123456-000"]:
+        (tmp_path / name).mkdir()
+    storage = CaptureStorage(root=tmp_path)
+
+    assert [d.name for d in storage.list_captures()] == [
+        "20261108-000000-000",
+        "20261107-123456-001",
+        "20261107-123456-000",
+    ]
+
+
+def test_list_captures_skips_entries_that_are_not_captures(tmp_path):
+    (tmp_path / "20261107-123456-000").mkdir()
+    (tmp_path / "20261107-123456-001").write_text("not a directory")
+    (tmp_path / "notes").mkdir()
+    (tmp_path / "20261107-123456").mkdir()
+    storage = CaptureStorage(root=tmp_path)
+
+    assert [d.name for d in storage.list_captures()] == ["20261107-123456-000"]
+
+
+def test_list_captures_is_empty_before_the_first_capture(tmp_path):
+    storage = CaptureStorage(root=tmp_path / "captures")
+
+    assert storage.list_captures() == []
+
+
+def run_in_thread(target):
+    results = []
+    thread = threading.Thread(target=lambda: results.append(target()))
+    thread.start()
+    return thread, results
+
+
+def test_list_captures_waits_until_the_capture_being_saved_is_done(tmp_path):
+    storage = CaptureStorage(root=tmp_path, clock=fixed_clock())
+
+    with storage.new_capture() as directory:
+        thread, results = run_in_thread(storage.list_captures)
+        thread.join(timeout=0.1)
+        listed_while_saving = list(results)
+        (directory / "meta.json").write_text("{}", encoding="utf-8")
+    thread.join()
+
+    assert listed_while_saving == []
+    assert results == [[directory]]
+
+
+def test_find_capture_returns_the_capture_directory(tmp_path):
+    (tmp_path / "20261107-123456-000").mkdir()
+    storage = CaptureStorage(root=tmp_path)
+
+    assert storage.find_capture("20261107-123456-000") == (
+        tmp_path / "20261107-123456-000"
+    )
+
+
+@pytest.mark.parametrize(
+    "capture_id",
+    ["..", "../captures", "20261107-123456-000/..", "20261107-123456", "", "notes"],
+)
+def test_find_capture_rejects_ids_that_are_not_capture_names(tmp_path, capture_id):
+    root = tmp_path / "captures"
+    (root / "notes").mkdir(parents=True)
+    (root / "20261107-123456-000").mkdir()
+    storage = CaptureStorage(root=root)
+
+    with pytest.raises(CaptureNotFoundError, match="invalid capture id"):
+        storage.find_capture(capture_id)
+
+
+def test_find_capture_rejects_a_missing_capture(tmp_path):
+    storage = CaptureStorage(root=tmp_path)
+
+    with pytest.raises(CaptureNotFoundError, match="no capture"):
+        storage.find_capture("20261107-123456-000")
+
+
+def test_delete_capture_removes_the_capture_directory(tmp_path):
+    storage = CaptureStorage(root=tmp_path, clock=fixed_clock())
+    kept = storage.save_capture(make_cameras(), make_synced())
+    deleted = storage.save_capture(make_cameras(), make_synced())
+
+    storage.delete_capture(deleted.name)
+
+    assert list(tmp_path.iterdir()) == [kept]
+
+
+def test_delete_capture_rejects_paths_outside_the_capture_root(tmp_path):
+    root = tmp_path / "captures"
+    root.mkdir()
+    outside = tmp_path / "keep"
+    outside.mkdir()
+    storage = CaptureStorage(root=root)
+
+    with pytest.raises(CaptureNotFoundError):
+        storage.delete_capture("../keep")
+
+    assert outside.is_dir()
+
+
+def test_delete_capture_rejects_a_missing_capture(tmp_path):
+    storage = CaptureStorage(root=tmp_path)
+
+    with pytest.raises(CaptureNotFoundError):
+        storage.delete_capture("20261107-123456-000")
+
+
+def test_delete_capture_waits_until_the_capture_being_saved_is_done(tmp_path):
+    storage = CaptureStorage(root=tmp_path, clock=fixed_clock())
+
+    with storage.new_capture() as directory:
+        thread, results = run_in_thread(lambda: storage.delete_capture(directory.name))
+        thread.join(timeout=0.1)
+        deleted_while_saving = bool(results)
+        (directory / "meta.json").write_text("{}", encoding="utf-8")
+    thread.join()
+
+    assert not deleted_while_saving
+    assert results == [None]
+    assert not directory.exists()

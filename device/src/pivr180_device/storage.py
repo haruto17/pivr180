@@ -1,5 +1,7 @@
 import json
+import re
 import shutil
+import threading
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
 from datetime import UTC, datetime
@@ -17,9 +19,14 @@ LEFT_FILENAME = "left.jpg"
 RIGHT_FILENAME = "right.jpg"
 META_FILENAME = "meta.json"
 MAX_CAPTURES_PER_SECOND = 1000
+CAPTURE_ID_PATTERN = re.compile(r"[0-9]{8}-[0-9]{6}-[0-9]{3}")
 
 
 class CaptureSaveError(Exception):
+    pass
+
+
+class CaptureNotFoundError(LookupError):
     pass
 
 
@@ -35,6 +42,9 @@ class CaptureStorage:
     ) -> None:
         self._root = root
         self._clock = clock
+        # Not per-directory: listing and deleting only need to skip the one
+        # capture being written, and saves already happen one at a time.
+        self._lock = threading.Lock()
 
     @property
     def root(self) -> Path:
@@ -42,17 +52,44 @@ class CaptureStorage:
 
     @contextmanager
     def new_capture(self) -> Iterator[Path]:
-        directory = self._reserve_directory()
-        try:
-            yield directory
-        except BaseException as error:
+        with self._lock:
+            directory = self._reserve_directory()
             try:
-                shutil.rmtree(directory)
-            except OSError as cleanup_error:
-                error.add_note(
-                    f"failed to remove incomplete capture {directory}: {cleanup_error}"
-                )
-            raise
+                yield directory
+            except BaseException as error:
+                try:
+                    shutil.rmtree(directory)
+                except OSError as cleanup_error:
+                    error.add_note(
+                        f"failed to remove incomplete capture {directory}: "
+                        f"{cleanup_error}"
+                    )
+                raise
+
+    def list_captures(self) -> list[Path]:
+        with self._lock:
+            try:
+                entries = list(self._root.iterdir())
+            except FileNotFoundError:
+                return []
+            directories = [
+                entry
+                for entry in entries
+                if CAPTURE_ID_PATTERN.fullmatch(entry.name) and entry.is_dir()
+            ]
+        return sorted(directories, key=lambda directory: directory.name, reverse=True)
+
+    def find_capture(self, capture_id: str) -> Path:
+        if not CAPTURE_ID_PATTERN.fullmatch(capture_id):
+            raise CaptureNotFoundError(f"invalid capture id: {capture_id!r}")
+        directory = self._root / capture_id
+        if not directory.is_dir():
+            raise CaptureNotFoundError(f"no capture {capture_id} under {self._root}")
+        return directory
+
+    def delete_capture(self, capture_id: str) -> None:
+        with self._lock:
+            shutil.rmtree(self.find_capture(capture_id))
 
     def save_capture(self, cameras: CameraPair, synced: SyncedPair) -> Path:
         _check_size("left", synced.left)

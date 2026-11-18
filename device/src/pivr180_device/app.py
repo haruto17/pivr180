@@ -14,9 +14,11 @@ from pivr180_device.atoms3.pyserial import DEFAULT_PORT, open_serial_link
 from pivr180_device.button import ButtonShutter, Status
 from pivr180_device.camera.base import CameraPair
 from pivr180_device.camera.picamera2 import open_camera_pair
+from pivr180_device.captures_api import captures_router
 from pivr180_device.exposure import ExposurePreview, ExposureSettings, ExposureSync
 from pivr180_device.power import power_off
 from pivr180_device.preview import preview_router
+from pivr180_device.shutdown import ShutdownRequest, shutdown_router
 from pivr180_device.slot import CameraSlot, LiveCameras
 from pivr180_device.storage import DEFAULT_CAPTURE_ROOT, CaptureStorage
 from pivr180_device.sync import SyncedPair, capture_synced_pair
@@ -180,11 +182,18 @@ def main(
     storage = CaptureStorage(args.captures_dir)
     slot = CameraSlot()
     shutter: ButtonShutter | None = None
+    shutdown_request = ShutdownRequest()
     code = EXIT_OK
     try:
         with ExitStack() as stack:
             try:
-                app = create_app([preview_router(slot)])
+                app = create_app(
+                    [
+                        preview_router(slot),
+                        shutdown_router(shutdown_request.request),
+                        captures_router(storage),
+                    ]
+                )
                 stack.enter_context(serve_web(app, WEB_HOST, args.web_port))
             except Exception:
                 # Not exiting: shooting with the button must keep working
@@ -204,7 +213,13 @@ def main(
                 triggers = stdin_triggers(sys.stdin if stdin is None else stdin)
             try:
                 with open_pair(args.left, args.right) as pair:
-                    run(pair, storage, triggers, show, slot)
+                    run(
+                        pair,
+                        storage,
+                        shutdown_request.until_requested(triggers),
+                        show,
+                        slot,
+                    )
             except Exception:
                 show(Status.ERROR)
                 raise
@@ -214,9 +229,12 @@ def main(
     except Exception:
         logger.exception("capture stopped on error; cameras released")
         code = EXIT_ERROR
-    # Not skipped after an error: the hold was the user's request, and by now the
-    # capture under way has ended and the cameras and the button are released.
-    if shutter is not None and shutter.shutdown_requested:
+    # Not skipped after an error: the hold or the phone was the user's request, and
+    # by now the capture under way has ended and the cameras and the button are
+    # released.
+    if shutdown_request.requested or (
+        shutter is not None and shutter.shutdown_requested
+    ):
         logger.info("powering off")
         try:
             shutdown()

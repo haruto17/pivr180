@@ -14,6 +14,12 @@ describe('renderApp', () => {
     expect(root.querySelector('h1')?.textContent).toBe('pivr180')
   })
 
+  it('shows the shutdown button', () => {
+    renderApp(root)
+
+    expect(root.querySelector('section button')?.textContent).toBe('シャットダウン')
+  })
+
   it('replaces whatever the root showed before', () => {
     root.textContent = 'loading'
 
