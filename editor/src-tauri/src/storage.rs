@@ -2,6 +2,9 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, PoisonError};
+
+static CHANGE_ROOT_LOCK: Mutex<()> = Mutex::new(());
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StorageSettings {
@@ -64,6 +67,9 @@ impl StorageSettings {
                 format!("保存先は絶対パスで指定してください: {}", root.display()),
             ));
         }
+        let _guard = CHANGE_ROOT_LOCK
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
         let settings = Self { root };
         fs::create_dir_all(settings.captures_dir())?;
         fs::create_dir_all(settings.exports_dir())?;
@@ -172,5 +178,23 @@ mod tests {
             StorageSettings::load(&path, Path::new("/home/me")).unwrap(),
             settings
         );
+    }
+
+    #[test]
+    fn concurrent_change_root_calls_persist_one_of_the_roots_without_leaving_temp_file() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        let roots: Vec<PathBuf> = (0..8)
+            .map(|i| dir.path().join(format!("library{i}")))
+            .collect();
+        std::thread::scope(|scope| {
+            for root in &roots {
+                let path = &path;
+                scope.spawn(move || StorageSettings::change_root(root.clone(), path).unwrap());
+            }
+        });
+        let saved = StorageSettings::load(&path, Path::new("/home/me")).unwrap();
+        assert!(roots.contains(&saved.root));
+        assert!(!path.with_extension("json.tmp").exists());
     }
 }
