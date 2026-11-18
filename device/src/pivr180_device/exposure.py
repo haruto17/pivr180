@@ -116,9 +116,13 @@ class ExposureSync:
     def apply_controls(self, controls: Controls) -> None:
         # Not without the shutter: a shot under way would take left and right
         # with different settings if one camera changed before the other.
+        # Not released right after set_controls: controls are queued, so a shot
+        # started at once would lock AE/AWB from frames with the old settings.
         with self._shutter:
             self._pair.right.set_controls(controls)
             self._pair.left.set_controls(controls)
+            self._skip_settle_frames(self._pair.right)
+            self._skip_settle_frames(self._pair.left)
 
     def sync_once(self) -> ExposureSettings | None:
         with self._mutex:
@@ -155,9 +159,12 @@ class ExposureSync:
             self._locked_settings = settings
             return settings
 
-    def _wait_until_applied(self, camera: Camera, settings: ExposureSettings) -> None:
+    def _skip_settle_frames(self, camera: Camera) -> None:
         for _ in range(self._settle_frames):
             camera.capture_metadata()
+
+    def _wait_until_applied(self, camera: Camera, settings: ExposureSettings) -> None:
+        self._skip_settle_frames(camera)
         last: FrameMetadata | None = None
         consecutive = 0
         for _ in range(self._max_wait_frames):
