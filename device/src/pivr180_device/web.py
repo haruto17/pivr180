@@ -10,6 +10,7 @@ from fastapi.staticfiles import StaticFiles
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 STARTUP_POLL_S = 0.01
+SHUTDOWN_TIMEOUT_S = 2.0
 
 
 def create_app(
@@ -25,10 +26,26 @@ def create_app(
 
 
 @contextmanager
-def serve(app: FastAPI, host: str, port: int) -> Iterator[uvicorn.Server]:
-    # Not uvicorn's own log config: it would add handlers that bypass the
-    # capture software's logging format.
-    server = uvicorn.Server(uvicorn.Config(app, host=host, port=port, log_config=None))
+def serve(
+    app: FastAPI,
+    host: str,
+    port: int,
+    shutdown_timeout_s: float = SHUTDOWN_TIMEOUT_S,
+) -> Iterator[uvicorn.Server]:
+    server = uvicorn.Server(
+        uvicorn.Config(
+            app,
+            host=host,
+            port=port,
+            # Not uvicorn's own log config: it would add handlers that bypass
+            # the capture software's logging format.
+            log_config=None,
+            # Not waiting for every response to finish: a phone that left the
+            # network can keep a live preview send blocked for minutes, which
+            # would delay releasing the process and powering off.
+            timeout_graceful_shutdown=shutdown_timeout_s,
+        )
+    )
 
     def run() -> None:
         # Not left to propagate: uvicorn exits with SystemExit when it cannot

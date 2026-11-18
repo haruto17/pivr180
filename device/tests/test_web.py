@@ -1,10 +1,14 @@
+import asyncio
 import socket
 import threading
+import time
+from collections.abc import AsyncIterator
 from pathlib import Path
 
 import httpx2
 import pytest
 from fastapi import APIRouter
+from fastapi.responses import StreamingResponse
 from fastapi.testclient import TestClient
 
 from pivr180_device.web import STATIC_DIR, create_app, serve
@@ -107,4 +111,38 @@ def test_serve_fails_when_the_port_is_taken(static_dir: Path):
         with pytest.raises(RuntimeError, match=f"127.0.0.1:{port}"), server:
             pass
 
+    assert web_server_threads() == []
+
+
+def test_serve_stops_without_waiting_for_a_response_that_never_ends(
+    static_dir: Path,
+):
+    router = APIRouter()
+
+    async def forever() -> AsyncIterator[bytes]:
+        while True:
+            yield b"chunk"
+            await asyncio.sleep(0.01)
+
+    @router.get("/forever")
+    def endless() -> StreamingResponse:
+        return StreamingResponse(forever())
+
+    app = create_app([router], static_dir=static_dir)
+    with httpx2.Client() as client:
+        with serve(app, "127.0.0.1", 0, shutdown_timeout_s=0.1) as server:
+            [listener] = server.servers[0].sockets
+            port = listener.getsockname()[1]
+            response = client.send(
+                client.build_request("GET", f"http://127.0.0.1:{port}/forever"),
+                stream=True,
+            )
+            chunks = response.iter_bytes()
+            first = next(chunks)
+            stopping = time.monotonic()
+        stopped_in = time.monotonic() - stopping
+        response.close()
+
+    assert first.startswith(b"chunk")
+    assert stopped_in < 2.0
     assert web_server_threads() == []

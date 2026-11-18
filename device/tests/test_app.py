@@ -12,6 +12,7 @@ from importlib.metadata import entry_points
 from pathlib import Path
 from typing import Any
 
+import httpx2
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -29,8 +30,12 @@ from pivr180_device.atoms3.pyserial import DEFAULT_PORT
 from pivr180_device.button import Status
 from pivr180_device.camera import CameraPair, Controls, FrameMetadata
 from pivr180_device.camera.fake import FakeCamera, FakeFrame
+from pivr180_device.exposure import ExposureSync
+from pivr180_device.preview import PREVIEW_PATH
 from pivr180_device.shutdown import SHUTDOWN_HEADER, SHUTDOWN_HEADER_VALUE
+from pivr180_device.slot import CameraSlot
 from pivr180_device.storage import CaptureStorage
+from pivr180_device.web import serve
 
 AUTO = FrameMetadata(
     sensor_timestamp_ns=0,
@@ -439,6 +444,61 @@ def test_releases_cameras_and_stops_preview_on_keyboard_interrupt(
     assert not left.started
     assert not right.started
     assert preview_threads() == []
+
+
+def test_lends_the_cameras_to_the_web_ui_once_ready_to_shoot(
+    pair: CameraPair, left: AutoCamera, storage: CaptureStorage
+):
+    slot = CameraSlot()
+    ready_while_syncing: list[bool] = []
+    lent: list[tuple[object, object, bool]] = []
+    sync = left.capture_metadata
+
+    def capture_metadata() -> FrameMetadata:
+        if not ready_while_syncing:
+            ready_while_syncing.append(slot.ready)
+        return sync()
+
+    left.capture_metadata = capture_metadata  # type: ignore[method-assign]
+
+    def triggers() -> Iterator[None]:
+        with slot.borrow() as cameras:
+            assert cameras is not None
+            lent.append((cameras.pair, cameras.exposure, bool(preview_threads())))
+        yield from ()
+
+    run(pair, storage, triggers(), slot=slot)
+
+    assert ready_while_syncing == [False]
+    [(lent_pair, exposure, previewing)] = lent
+    assert lent_pair is pair
+    assert isinstance(exposure, ExposureSync)
+    assert previewing
+    assert not slot.ready
+
+
+def test_takes_the_cameras_back_from_the_web_ui_before_stopping_them(
+    pair: CameraPair, left: AutoCamera, storage: CaptureStorage
+):
+    slot = CameraSlot()
+    ready_at_stop: list[bool] = []
+    stop = left.stop
+
+    def recording_stop() -> None:
+        ready_at_stop.append(slot.ready)
+        stop()
+
+    left.stop = recording_stop  # type: ignore[method-assign]
+
+    def triggers() -> Iterator[None]:
+        assert slot.ready
+        yield
+        raise KeyboardInterrupt
+
+    with pytest.raises(KeyboardInterrupt):
+        run(pair, storage, triggers(), slot=slot)
+
+    assert ready_at_stop == [False]
 
 
 def test_waits_for_both_cameras_to_sync_before_preview(
@@ -1196,6 +1256,46 @@ def test_main_stops_the_web_ui_on_ctrl_c(pair: CameraPair, tmp_path: Path):
 
     assert code == EXIT_INTERRUPTED
     assert len(serve_web.stopped_while) == 1
+
+
+class PreviewWatchingStdin(io.StringIO):
+    def __init__(self, serve_web: ServeWebRecorder) -> None:
+        super().__init__()
+        self.serve_web = serve_web
+        self.status: int | None = None
+        self.first_chunk = b""
+
+    def __iter__(self) -> Iterator[str]:
+        [(app, _, _)] = self.serve_web.served
+        with serve(app, "127.0.0.1", 0) as server, httpx2.Client() as client:
+            [listener] = server.servers[0].sockets
+            port = listener.getsockname()[1]
+            url = f"http://127.0.0.1:{port}{PREVIEW_PATH}"
+            with client.stream("GET", url) as response:
+                self.status = response.status_code
+                chunks = response.iter_bytes()
+                self.first_chunk = next(chunks)
+        yield "q\n"
+
+
+def test_main_serves_the_live_preview_only_while_ready_to_shoot(
+    pair: CameraPair, tmp_path: Path
+):
+    serve_web = ServeWebRecorder()
+    stdin = PreviewWatchingStdin(serve_web)
+
+    code = main(
+        ["--shutter", "stdin", "--captures-dir", str(tmp_path / "captures")],
+        open_pair=OpenPairRecorder(pair),
+        stdin=stdin,
+        serve_web=serve_web,
+    )
+
+    assert code == EXIT_OK
+    assert stdin.status == 200
+    assert stdin.first_chunk.startswith(b"--frame\r\n")
+    [(app, _, _)] = serve_web.served
+    assert TestClient(app).get(PREVIEW_PATH).status_code == 503
 
 
 def test_main_keeps_shooting_when_the_web_ui_cannot_start(

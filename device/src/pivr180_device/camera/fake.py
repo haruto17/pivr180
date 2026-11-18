@@ -3,6 +3,8 @@ from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from PIL import Image
+
 from pivr180_device.camera.base import Controls, FrameMetadata
 
 
@@ -24,10 +26,15 @@ class FakeCamera:
         camera_id: str,
         model: str = "imx477",
         frames: Iterable[FakeFrame] = (),
+        preview_size: tuple[int, int] = (64, 48),
+        preview_color: tuple[int, int, int] = (128, 128, 128),
     ) -> None:
         self._camera_id = camera_id
         self._model = model
         self._frames: deque[FakeFrame] = deque(frames)
+        self.preview_size = preview_size
+        self.preview_color = preview_color
+        self.previews = 0
         self.started = False
         self.controls_history: list[Controls] = []
 
@@ -63,6 +70,12 @@ class FakeCamera:
 
     def capture_frame(self) -> FakeFrame:
         return self._next_frame()
+
+    def capture_preview(self) -> Image.Image:
+        if not self.started:
+            raise RuntimeError(f"camera {self._camera_id} is not started")
+        self.previews += 1
+        return Image.new("RGB", self.preview_size, self.preview_color)
 
     def _next_frame(self) -> FakeFrame:
         if not self.started:
