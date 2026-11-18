@@ -16,4 +16,11 @@ describe("+page.svelte", () => {
     expect(body).toContain('aria-label="保存先"');
     expect(body).toContain("保存</button>");
   });
+
+  it("renders the import section with the host and the import button", () => {
+    const { body } = render(Page);
+    expect(body).toContain("<h2>取り込み</h2>");
+    expect(body).toContain('aria-label="接続先"');
+    expect(body).toContain("取り込む</button>");
+  });
 });
