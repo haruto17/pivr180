@@ -415,6 +415,84 @@ def test_overlapping_shoots_do_not_resume_preview_mid_capture():
     assert left.controls["AeEnable"] is True
 
 
+def test_apply_controls_sets_the_controls_on_both_cameras():
+    sync, left, right = make_sync()
+
+    sync.apply_controls(Controls(ExposureValue=-1.0, AwbMode=5, Contrast=1.5))
+
+    assert left.controls == {"ExposureValue": -1.0, "AwbMode": 5, "Contrast": 1.5}
+    assert right.controls == {"ExposureValue": -1.0, "AwbMode": 5, "Contrast": 1.5}
+
+
+class RecordingCamera(FakeCamera):
+    def __init__(self, *args, events: list[str], **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.events = events
+
+    def set_controls(self, controls: Controls) -> None:
+        self.events.append(f"{self.camera_id} set")
+        super().set_controls(controls)
+
+    def capture_metadata(self) -> FrameMetadata:
+        self.events.append(f"{self.camera_id} frame")
+        return super().capture_metadata()
+
+
+def test_apply_controls_skips_the_settle_frames_on_both_cameras_after_setting():
+    old = make_frame(exposure_time_us=10_000)
+    new = make_frame(exposure_time_us=20_000)
+    events: list[str] = []
+    left = RecordingCamera("left", frames=[old, old, new], events=events)
+    right = RecordingCamera("right", frames=[old, old, new], events=events)
+    pair = CameraPair(left=left, right=right)
+    pair.start()
+    sync = ExposureSync(pair, settle_frames=2, stable_frames=1)
+
+    sync.apply_controls(Controls(Contrast=1.5))
+    applied_events = list(events)
+
+    assert applied_events == [
+        "right set",
+        "left set",
+        "right frame",
+        "right frame",
+        "left frame",
+        "left frame",
+    ]
+    assert left.capture_metadata() == new.metadata
+    assert right.capture_metadata() == new.metadata
+
+
+def test_apply_controls_waits_until_the_shot_under_way_ends():
+    sync, left, right = make_sync([make_frame(), make_frame()], [make_frame()])
+    entered = threading.Event()
+    release = threading.Event()
+    seen: list[tuple[Controls, Controls]] = []
+
+    def capture(settings: ExposureSettings) -> None:
+        entered.set()
+        release.wait(timeout=5)
+        seen.append((left.controls, right.controls))
+
+    shooting = threading.Thread(target=sync.shoot, args=(capture,))
+    shooting.start()
+    assert entered.wait(timeout=5)
+    applying = threading.Thread(
+        target=sync.apply_controls, args=(Controls(Contrast=1.5),)
+    )
+    applying.start()
+    applying.join(timeout=0.2)
+    still_applying = applying.is_alive()
+    release.set()
+    shooting.join(timeout=5)
+    applying.join(timeout=5)
+
+    assert still_applying
+    assert seen == [(LOCKED_CONTROLS, LOCKED_CONTROLS)]
+    assert left.controls["Contrast"] == 1.5
+    assert right.controls["Contrast"] == 1.5
+
+
 class BlockingFirstCaptureCamera(FakeCamera):
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
