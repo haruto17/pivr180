@@ -113,6 +113,13 @@ class ExposureSync:
         with self._shutter:
             self._resume_preview()
 
+    def apply_controls(self, controls: Controls) -> None:
+        # Not without the shutter: a shot under way would take left and right
+        # with different settings if one camera changed before the other.
+        with self._shutter:
+            self._pair.right.set_controls(controls)
+            self._pair.left.set_controls(controls)
+
     def sync_once(self) -> ExposureSettings | None:
         with self._mutex:
             if self._locked_settings is not None:

@@ -415,6 +415,45 @@ def test_overlapping_shoots_do_not_resume_preview_mid_capture():
     assert left.controls["AeEnable"] is True
 
 
+def test_apply_controls_sets_the_controls_on_both_cameras():
+    sync, left, right = make_sync()
+
+    sync.apply_controls(Controls(ExposureValue=-1.0, AwbMode=5, Contrast=1.5))
+
+    assert left.controls == {"ExposureValue": -1.0, "AwbMode": 5, "Contrast": 1.5}
+    assert right.controls == {"ExposureValue": -1.0, "AwbMode": 5, "Contrast": 1.5}
+
+
+def test_apply_controls_waits_until_the_shot_under_way_ends():
+    sync, left, right = make_sync([make_frame(), make_frame()], [make_frame()])
+    entered = threading.Event()
+    release = threading.Event()
+    seen: list[tuple[Controls, Controls]] = []
+
+    def capture(settings: ExposureSettings) -> None:
+        entered.set()
+        release.wait(timeout=5)
+        seen.append((left.controls, right.controls))
+
+    shooting = threading.Thread(target=sync.shoot, args=(capture,))
+    shooting.start()
+    assert entered.wait(timeout=5)
+    applying = threading.Thread(
+        target=sync.apply_controls, args=(Controls(Contrast=1.5),)
+    )
+    applying.start()
+    applying.join(timeout=0.2)
+    still_applying = applying.is_alive()
+    release.set()
+    shooting.join(timeout=5)
+    applying.join(timeout=5)
+
+    assert still_applying
+    assert seen == [(LOCKED_CONTROLS, LOCKED_CONTROLS)]
+    assert left.controls["Contrast"] == 1.5
+    assert right.controls["Contrast"] == 1.5
+
+
 class BlockingFirstCaptureCamera(FakeCamera):
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)

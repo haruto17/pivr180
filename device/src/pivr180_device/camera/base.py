@@ -19,6 +19,9 @@ class Controls(TypedDict, total=False):
     ColourGains: tuple[float, float]
     AeEnable: bool
     AwbEnable: bool
+    ExposureValue: float
+    AwbMode: int
+    Contrast: float
 
 
 class Frame(Protocol):
