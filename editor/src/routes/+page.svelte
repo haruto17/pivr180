@@ -9,6 +9,7 @@
   let storage = $state<StoragePaths>();
   let rootInput = $state("");
   let error = $state("");
+  let saving = $state(false);
 
   onMount(async () => {
     try {
@@ -22,11 +23,14 @@
   async function saveRoot(event: SubmitEvent) {
     event.preventDefault();
     error = "";
+    saving = true;
     try {
       storage = await setStorageSettings(rootInput);
       rootInput = storage.root;
     } catch (e) {
       error = String(e);
+    } finally {
+      saving = false;
     }
   }
 </script>
@@ -48,7 +52,7 @@
     {/if}
     <form onsubmit={saveRoot}>
       <input bind:value={rootInput} aria-label="保存先" />
-      <button type="submit">保存</button>
+      <button type="submit" disabled={saving}>保存</button>
     </form>
     {#if error}
       <p role="alert">{error}</p>
