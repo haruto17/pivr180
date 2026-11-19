@@ -34,3 +34,9 @@ opt-level = 3
 panic = "abort"
 strip = true
 
+# Not the dev default opt-level 0: a 12MP thumbnail then takes ~2s to decode instead of ~80ms.
+[profile.dev.package.image]
+opt-level = 3
+
+[profile.dev.package.zune-jpeg]
+opt-level = 3
