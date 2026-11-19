@@ -5,6 +5,7 @@
     setStorageSettings,
     type StoragePaths,
   } from "$lib/storage";
+  import CaptureList from "$lib/CaptureList.svelte";
 
   let storage = $state<StoragePaths>();
   let rootInput = $state("");
@@ -58,4 +59,6 @@
       <p role="alert">{error}</p>
     {/if}
   </section>
+
+  <CaptureList capturesDir={storage?.captures} />
 </main>

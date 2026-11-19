@@ -16,4 +16,10 @@ describe("+page.svelte", () => {
     expect(body).toContain('aria-label="保存先"');
     expect(body).toContain("保存</button>");
   });
+
+  it("renders the capture list section with a reload button", () => {
+    const { body } = render(Page);
+    expect(body).toContain("<h2>撮影一覧</h2>");
+    expect(body).toContain("再読み込み");
+  });
 });
