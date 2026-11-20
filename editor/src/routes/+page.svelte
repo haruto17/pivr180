@@ -5,11 +5,16 @@
     setStorageSettings,
     type StoragePaths,
   } from "$lib/storage";
+  import { getImportHost, importCaptures, setImportHost } from "$lib/import";
 
   let storage = $state<StoragePaths>();
   let rootInput = $state("");
   let error = $state("");
   let saving = $state(false);
+  let hostInput = $state("");
+  let importing = $state(false);
+  let imported = $state<string[]>();
+  let importError = $state("");
 
   onMount(async () => {
     try {
@@ -17,6 +22,14 @@
       rootInput = storage.root;
     } catch (e) {
       error = String(e);
+    }
+  });
+
+  onMount(async () => {
+    try {
+      hostInput = await getImportHost();
+    } catch (e) {
+      importError = String(e);
     }
   });
 
@@ -31,6 +44,21 @@
       error = String(e);
     } finally {
       saving = false;
+    }
+  }
+
+  async function runImport(event: SubmitEvent) {
+    event.preventDefault();
+    importError = "";
+    imported = undefined;
+    importing = true;
+    try {
+      hostInput = await setImportHost(hostInput);
+      imported = await importCaptures();
+    } catch (e) {
+      importError = String(e);
+    } finally {
+      importing = false;
     }
   }
 </script>
@@ -56,6 +84,23 @@
     </form>
     {#if error}
       <p role="alert">{error}</p>
+    {/if}
+  </section>
+
+  <section>
+    <h2>取り込み</h2>
+    <form onsubmit={runImport}>
+      <input bind:value={hostInput} aria-label="接続先" />
+      <button type="submit" disabled={importing}>取り込む</button>
+    </form>
+    {#if importing}
+      <p>取り込み中…</p>
+    {/if}
+    {#if imported}
+      <p>{imported.length} 件の撮影データを取り込みました</p>
+    {/if}
+    {#if importError}
+      <p role="alert">{importError}</p>
     {/if}
   </section>
 </main>
