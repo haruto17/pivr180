@@ -138,7 +138,7 @@
         {@const preview = previews[side]}
         {@const size = preview ?? DEFAULT_SIZE}
         {@const circle = values[side]}
-        <fieldset>
+        <fieldset disabled={busy}>
           <legend>{label}</legend>
           <p>{overridden[side] ? "この撮影で上書き" : "既定値を使用"}</p>
           {#each fields as field (field.key)}

@@ -218,6 +218,23 @@ describe("CorrectionEditor.svelte", () => {
     );
   });
 
+  it("locks the inputs while a save is pending", async () => {
+    let resolve!: (value: unknown) => void;
+    responses.set_capture_correction = () =>
+      new Promise((r) => (resolve = r));
+    await open();
+
+    await click("この撮影に保存");
+
+    const inputs = [...document.querySelectorAll("input")];
+    expect(inputs.every((i) => i.matches(":disabled"))).toBe(true);
+
+    resolve({ left, right, overridden: { left: true, right: true } });
+    await settle();
+
+    expect(inputs.every((i) => i.matches(":enabled"))).toBe(true);
+  });
+
   it("saves both sides as the device default", async () => {
     responses.set_device_correction = async (args) => args;
     await open();
