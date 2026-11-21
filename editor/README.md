@@ -24,6 +24,20 @@ pnpm tauri dev
 
 サムネイルは長辺 320px に縮小して、アプリのキャッシュディレクトリ（macOS では `~/Library/Caches/com.haruto17.pivr180.editor/`）の `thumbnails/<撮影 ID>/{left,right}.jpg` に保存し、元画像が更新されるまで再利用する。`captures/` 内には書き込まない。キャッシュは削除しても次回表示時に作り直される。
 
+## 取り込み
+
+画面の「取り込み」欄の「取り込む」で、Pi の `/data/captures/` にある撮影データを rsync（SSH 経由）で保存先の `captures/` に取り込む。
+
+- 既定の接続先は `pivr180.local`。Pi のユーザー名が Mac と違う場合は `user@pivr180.local` のように入力するか、`~/.ssh/config` に `User` を設定する。接続先は `settings.json` に保存される。
+- 取り込み済みのファイルは再取得しない（`rsync -a` で同じファイルは転送されない）。画面には今回取り込んだ撮影データの件数を表示する。
+- Pi 側のデータは取り込み後も削除しない。
+- パスワード入力は求めない（`BatchMode=yes`）ので、事前に SSH 鍵認証を設定しておく。初回はホスト鍵の登録も兼ねて次を実行する。
+
+```sh
+ssh-copy-id <user>@pivr180.local
+ssh <user>@pivr180.local true  # パスワードなしで通ることを確認
+```
+
 ## テスト・lint
 
 ```sh
