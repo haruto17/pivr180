@@ -66,6 +66,7 @@ export interface StereoScene {
   camera: PerspectiveCamera
   left: Mesh
   right: Mesh
+  setSwapped(swapped: boolean): void
   dispose(): void
 }
 
@@ -82,6 +83,10 @@ export function createStereoScene(texture: Texture, aspect = 1): StereoScene {
     camera,
     left,
     right,
+    setSwapped(swapped) {
+      left.layers.set(EYE_LAYER[swapped ? 'right' : 'left'])
+      right.layers.set(EYE_LAYER[swapped ? 'left' : 'right'])
+    },
     dispose() {
       for (const mesh of [left, right]) {
         mesh.geometry.dispose()

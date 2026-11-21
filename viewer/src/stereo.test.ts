@@ -83,6 +83,25 @@ describe('createStereoScene', () => {
     expect(right.layers.mask).toBe(1 << 2)
   })
 
+  it('shows the left mesh to the right eye and the right mesh to the left eye when swapped', () => {
+    const { left, right, setSwapped } = createStereoScene(new Texture())
+
+    setSwapped(true)
+
+    expect(left.layers.mask).toBe(1 << 2)
+    expect(right.layers.mask).toBe(1 << 1)
+  })
+
+  it('restores each mesh to its own eye when unswapped', () => {
+    const { left, right, setSwapped } = createStereoScene(new Texture())
+
+    setSwapped(true)
+    setSwapped(false)
+
+    expect(left.layers.mask).toBe(1 << 1)
+    expect(right.layers.mask).toBe(1 << 2)
+  })
+
   it('shares one sRGB texture between both eyes', () => {
     const texture = new Texture()
     const { left, right } = createStereoScene(texture)
