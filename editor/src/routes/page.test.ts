@@ -30,6 +30,13 @@ describe("+page.svelte", () => {
     expect(body).toContain("取り込む</button>");
   });
 
+  it("renders the export section with the per-eye size and a save button", () => {
+    const { body } = render(Page);
+    expect(body).toContain("<h2>書き出し</h2>");
+    expect(body).toContain("片目の解像度（px）");
+    expect(body).toMatch(/<input type="number" min="256" max="8192"/);
+  });
+
   it("renders the delete-after-import option unchecked", () => {
     const { body } = render(Page);
     expect(body).toContain('<input type="checkbox"/>');
