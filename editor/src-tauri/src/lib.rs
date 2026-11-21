@@ -369,4 +369,14 @@ mod tests {
         assert_eq!(config["identifier"], "com.haruto17.pivr180.editor");
         assert_eq!(config["productName"], "pivr180 editor");
     }
+
+    #[test]
+    fn release_build_builds_the_viewer_before_the_editor() {
+        let config: serde_json::Value =
+            serde_json::from_str(include_str!("../tauri.conf.json")).unwrap();
+        assert_eq!(
+            config["build"]["beforeBuildCommand"],
+            "pnpm --dir ../viewer build && pnpm build"
+        );
+    }
 }
