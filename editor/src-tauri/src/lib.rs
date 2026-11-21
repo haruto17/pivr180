@@ -99,6 +99,32 @@ async fn set_import_host(app: AppHandle, host: String) -> Result<String, String>
 }
 
 #[tauri::command]
+async fn get_delete_after_import(app: AppHandle) -> Result<bool, String> {
+    let home = app.path().home_dir().map_err(|e| e.to_string())?;
+    let path = settings_path(&app)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        StorageSettings::load(&path, &home)
+            .map(|settings| settings.delete_after_import)
+            .map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn set_delete_after_import(app: AppHandle, enabled: bool) -> Result<bool, String> {
+    let home = app.path().home_dir().map_err(|e| e.to_string())?;
+    let path = settings_path(&app)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        StorageSettings::change_delete_after_import(enabled, &path, &home)
+            .map(|settings| settings.delete_after_import)
+            .map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
 async fn import_captures(app: AppHandle) -> Result<import::ImportResult, String> {
     let home = app.path().home_dir().map_err(|e| e.to_string())?;
     let path = settings_path(&app)?;
@@ -124,6 +150,8 @@ pub fn run() {
             capture_thumbnail,
             get_import_host,
             set_import_host,
+            get_delete_after_import,
+            set_delete_after_import,
             import_captures
         ])
         .run(tauri::generate_context!())
