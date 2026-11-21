@@ -82,6 +82,26 @@ ssh <user>@pivr180.local true  # パスワードなしで通ることを確認
 - 同じ撮影をもう一度書き出すと上書きする。一時ファイルに書き終えてから置き換えるので、書き出しに失敗しても前のファイルは残る。`captures/` 内には書き込まない。
 - 書き出しは一度に 1 件ずつ行い、複数の撮影で「書き出し」を押すと順番に処理する。
 
+## viewer 配信
+
+editor の起動時に、HTTPS サーバーをポート 8443（全インターフェース）で起動し、viewer の画面と写真一覧 API を同じオリジンから配信する。Quest 3 のブラウザで `https://<Mac のホスト名>.local:8443/` を開く。
+
+- `GET /api/photos`: 保存先の `exports/` 直下にある `*_180_LR.jpg` の一覧を、新しい順（ファイル名の降順）に `[{"name": "<ファイル名>", "url": "/photos/<ファイル名>"}]` の JSON で返す。`exports/` 以外の写真は返さない。保存先はリクエストごとに `settings.json` から読むので、変更はすぐに反映される。
+- `GET /photos/<ファイル名>`: `exports/` 直下の `*_180_LR.jpg` を `image/jpeg` で返す。それ以外（区切り文字を含む名前、存在しないファイルなど）は 404。
+- それ以外のパス: viewer の静的ファイル（`/` は `index.html`）。存在しなければ 404。
+
+証明書と秘密鍵は、アプリ設定ディレクトリ（macOS では `~/Library/Application Support/com.haruto17.pivr180.editor/`）の `certs/cert.pem` と `certs/key.pem`（PEM 形式）から読む。証明書の発行は今後対応する（#38）。それまでは mkcert で Mac の LAN IP と `.local` 名に対して発行したものを手動で置く。
+
+```sh
+dir=~/Library/Application\ Support/com.haruto17.pivr180.editor/certs
+mkdir -p "$dir"
+mkcert -cert-file "$dir/cert.pem" -key-file "$dir/key.pem" "$(scutil --get LocalHostName).local" <Mac の LAN IP> localhost
+```
+
+画面の「viewer 配信」欄に、起動できたときは URL（`https://localhost:8443/` と `https://<ホスト名>.local:8443/`）、起動できなかったとき（証明書がない・読めない、ポートを使えない）はその理由を表示する。証明書を置いた後やポートを空けた後は editor を再起動する。
+
+viewer の静的ファイルは `viewer/dist` から読む。リリースビルド（`pnpm tauri build`）は viewer をビルドしてから（`viewer/` で `pnpm install` しておく）バイナリに埋め込む。開発ビルド（`pnpm tauri dev`）は実行時にディスクの `viewer/dist` を読むので、事前に `viewer/` で `pnpm build` しておく（なければ 404 になる）。
+
 ## テスト・lint
 
 ```sh
