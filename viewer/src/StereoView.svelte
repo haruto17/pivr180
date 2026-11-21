@@ -7,6 +7,8 @@
 
   let canvas: HTMLCanvasElement
   let renderer: WebGLRenderer | undefined
+  let stereo: StereoScene | undefined
+  let swapped = $state(false)
   let xrSupported = $state<boolean | undefined>(undefined)
   let error = $state('')
 
@@ -27,8 +29,12 @@
     }
   }
 
+  function toggleSwap() {
+    swapped = !swapped
+    stereo?.setSwapped(swapped)
+  }
+
   onMount(() => {
-    let stereo: StereoScene | undefined
     let destroyed = false
     const r = createRenderer(canvas)
     renderer = r
@@ -53,6 +59,7 @@
           return
         }
         const s = createStereoScene(texture, window.innerWidth / window.innerHeight)
+        s.setSwapped(swapped)
         stereo = s
         r.setAnimationLoop(() => {
           if (!r.xr.isPresenting) {
@@ -96,6 +103,7 @@
   {:else if xrSupported === false}
     <p>このブラウザは WebXR（immersive-vr）に対応していません。</p>
   {/if}
+  <button type="button" aria-pressed={swapped} onclick={toggleSwap}>左右を入れ替える</button>
   {#if error}
     <p role="alert">{error}</p>
   {/if}

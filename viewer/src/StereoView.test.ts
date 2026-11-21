@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { flushSync, mount, tick, unmount } from 'svelte'
-import { PerspectiveCamera, Quaternion, Texture } from 'three'
+import { PerspectiveCamera, Quaternion, Texture, type Mesh, type Scene } from 'three'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import StereoView from './StereoView.svelte'
 
@@ -53,6 +53,18 @@ async function render() {
 
 function vrButton() {
   return Array.from(document.querySelectorAll('button')).find((b) => b.textContent === 'VR で見る')
+}
+
+function swapButton() {
+  return Array.from(document.querySelectorAll('button')).find((b) => b.textContent === '左右を入れ替える')
+}
+
+function renderedScene() {
+  const loop = renderer.setAnimationLoop.mock.calls.at(-1)![0] as () => void
+  loop()
+  const scene = (renderer.render.mock.calls.at(-1) as unknown[])[0] as Scene
+  const [left, right] = scene.children as Mesh[]
+  return { left, right }
 }
 
 beforeEach(() => {
@@ -131,6 +143,48 @@ describe('StereoView', () => {
 
     expect(vrButton()).toBeUndefined()
     expect(document.body.textContent).toContain('WebXR（immersive-vr）に対応していません')
+  })
+
+  it('shows the left half to the right eye and the right half to the left eye when 「左右を入れ替える」 is pressed', async () => {
+    stubXr(true)
+    await render()
+
+    swapButton()!.click()
+    flushSync()
+
+    const { left, right } = renderedScene()
+    expect(left.layers.mask).toBe(1 << 2)
+    expect(right.layers.mask).toBe(1 << 1)
+    expect(swapButton()!.getAttribute('aria-pressed')).toBe('true')
+  })
+
+  it('restores each half to its own eye when 「左右を入れ替える」 is pressed again', async () => {
+    stubXr(true)
+    await render()
+
+    swapButton()!.click()
+    swapButton()!.click()
+    flushSync()
+
+    const { left, right } = renderedScene()
+    expect(left.layers.mask).toBe(1 << 1)
+    expect(right.layers.mask).toBe(1 << 2)
+    expect(swapButton()!.getAttribute('aria-pressed')).toBe('false')
+  })
+
+  it('keeps the eyes swapped when 「左右を入れ替える」 was pressed before the photo loaded', async () => {
+    stubXr(true)
+    component = mount(StereoView, { target: document.body, props: { src: '/photo.jpg' } })
+    flushSync()
+
+    swapButton()!.click()
+    await tick()
+    await tick()
+    flushSync()
+
+    const { left, right } = renderedScene()
+    expect(left.layers.mask).toBe(1 << 2)
+    expect(right.layers.mask).toBe(1 << 1)
   })
 
   it('renders the photo every frame', async () => {
