@@ -2,6 +2,7 @@
   import { untrack } from "svelte";
   import { listCaptures } from "$lib/captures";
   import CaptureItem from "$lib/CaptureItem.svelte";
+  import CorrectionEditor from "$lib/CorrectionEditor.svelte";
 
   let { capturesDir, reloadKey }: { capturesDir?: string; reloadKey?: number } =
     $props();
@@ -10,6 +11,7 @@
   let error = $state("");
   let loading = $state(false);
   let generation = $state(0);
+  let editing = $state<string>();
   let latestRequest = 0;
 
   async function load() {
@@ -44,6 +46,11 @@
   <button type="button" onclick={() => load()} disabled={loading}>
     再読み込み
   </button>
+  {#if editing}
+    {#key editing}
+      <CorrectionEditor id={editing} onclose={() => (editing = undefined)} />
+    {/key}
+  {/if}
   {#if error}
     <p role="alert">{error}</p>
   {:else if ids?.length === 0}
@@ -52,7 +59,7 @@
     <ul>
       {#key generation}
         {#each ids as id (id)}
-          <CaptureItem {id} />
+          <CaptureItem {id} oncorrect={() => (editing = id)} />
         {/each}
       {/key}
     </ul>
