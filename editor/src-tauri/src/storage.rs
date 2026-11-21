@@ -45,6 +45,10 @@ impl StorageSettings {
         self.root.join("exports")
     }
 
+    pub fn corrections_dir(&self) -> PathBuf {
+        self.root.join("corrections")
+    }
+
     pub fn paths(&self) -> StoragePaths {
         StoragePaths {
             root: self.root.clone(),
@@ -160,6 +164,15 @@ mod tests {
                 captures: PathBuf::from("/data/pivr180/captures"),
                 exports: PathBuf::from("/data/pivr180/exports"),
             }
+        );
+    }
+
+    #[test]
+    fn corrections_live_under_root() {
+        let settings = StorageSettings::default_for(Path::new("/Users/someone"));
+        assert_eq!(
+            settings.corrections_dir(),
+            PathBuf::from("/Users/someone/Pictures/pivr180/corrections")
         );
     }
 
