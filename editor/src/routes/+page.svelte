@@ -5,6 +5,7 @@
     setStorageSettings,
     type StoragePaths,
   } from "$lib/storage";
+  import CaptureList from "$lib/CaptureList.svelte";
   import { getImportHost, importCaptures, setImportHost } from "$lib/import";
 
   let storage = $state<StoragePaths>();
@@ -15,6 +16,7 @@
   let importing = $state(false);
   let imported = $state<string[]>();
   let importError = $state("");
+  let importCount = $state(0);
 
   onMount(async () => {
     try {
@@ -55,6 +57,7 @@
     try {
       hostInput = await setImportHost(hostInput);
       imported = await importCaptures();
+      importCount++;
     } catch (e) {
       importError = String(e);
     } finally {
@@ -103,4 +106,6 @@
       <p role="alert">{importError}</p>
     {/if}
   </section>
+
+  <CaptureList capturesDir={storage?.captures} reloadKey={importCount} />
 </main>

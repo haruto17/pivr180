@@ -19,6 +19,8 @@ tauri-build = { version = "2", features = [] }
 tauri = { version = "2", features = [] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+image = { version = "0.25", default-features = false, features = ["jpeg"] }
+base64 = "0.23"
 
 [dev-dependencies]
 tempfile = "3"
@@ -31,3 +33,10 @@ lto = true
 opt-level = 3
 panic = "abort"
 strip = true
+
+# Not the dev default opt-level 0: a 12MP thumbnail then takes ~2s to decode instead of ~80ms.
+[profile.dev.package.image]
+opt-level = 3
+
+[profile.dev.package.zune-jpeg]
+opt-level = 3

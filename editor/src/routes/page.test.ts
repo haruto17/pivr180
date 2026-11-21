@@ -17,6 +17,12 @@ describe("+page.svelte", () => {
     expect(body).toContain("保存</button>");
   });
 
+  it("renders the capture list section with a reload button", () => {
+    const { body } = render(Page);
+    expect(body).toContain("<h2>撮影一覧</h2>");
+    expect(body).toContain("再読み込み");
+  });
+
   it("renders the import section with the host and the import button", () => {
     const { body } = render(Page);
     expect(body).toContain("<h2>取り込み</h2>");

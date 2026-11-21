@@ -1,6 +1,9 @@
+mod captures;
 mod import;
 mod storage;
 
+use base64::Engine;
+use captures::Side;
 use std::path::PathBuf;
 use storage::{StoragePaths, StorageSettings};
 use tauri::{AppHandle, Manager};
@@ -33,6 +36,37 @@ async fn set_storage_settings(app: AppHandle, root: PathBuf) -> Result<StoragePa
         StorageSettings::change_root(root, &path, &home)
             .map(|settings| settings.paths())
             .map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn list_captures(app: AppHandle) -> Result<Vec<String>, String> {
+    let home = app.path().home_dir().map_err(|e| e.to_string())?;
+    let path = settings_path(&app)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let settings = StorageSettings::load(&path, &home).map_err(|e| e.to_string())?;
+        captures::list_captures(&settings.captures_dir()).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn capture_thumbnail(app: AppHandle, id: String, side: Side) -> Result<String, String> {
+    let home = app.path().home_dir().map_err(|e| e.to_string())?;
+    let path = settings_path(&app)?;
+    let cache_dir = app.path().app_cache_dir().map_err(|e| e.to_string())?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let settings = StorageSettings::load(&path, &home).map_err(|e| e.to_string())?;
+        let cached = captures::thumbnail(&settings.captures_dir(), &cache_dir, &id, side)
+            .map_err(|e| e.to_string())?;
+        let jpeg = std::fs::read(cached).map_err(|e| e.to_string())?;
+        Ok(format!(
+            "data:image/jpeg;base64,{}",
+            base64::engine::general_purpose::STANDARD.encode(jpeg)
+        ))
     })
     .await
     .map_err(|e| e.to_string())?
@@ -85,6 +119,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             get_storage_settings,
             set_storage_settings,
+            list_captures,
+            capture_thumbnail,
             get_import_host,
             set_import_host,
             import_captures
