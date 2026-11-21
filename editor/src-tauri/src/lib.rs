@@ -1,8 +1,7 @@
 mod captures;
 mod correction;
-// Not yet wired to a Tauri command; that lands with #36.
-#[cfg_attr(not(test), allow(dead_code))]
 mod equirect;
+mod export;
 mod import;
 mod storage;
 
@@ -250,6 +249,25 @@ async fn clear_capture_correction(app: AppHandle, id: String) -> Result<CaptureC
     .map_err(|e| e.to_string())?
 }
 
+#[tauri::command]
+async fn export_capture(app: AppHandle, id: String) -> Result<PathBuf, String> {
+    let home = app.path().home_dir().map_err(|e| e.to_string())?;
+    let path = settings_path(&app)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let settings = StorageSettings::load(&path, &home).map_err(|e| e.to_string())?;
+        export::export_capture(
+            &settings.captures_dir(),
+            &settings.corrections_dir(),
+            &settings.exports_dir(),
+            &id,
+            settings.export_eye_size,
+        )
+        .map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -269,7 +287,8 @@ pub fn run() {
             set_device_correction,
             get_capture_correction,
             set_capture_correction,
-            clear_capture_correction
+            clear_capture_correction,
+            export_capture
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
