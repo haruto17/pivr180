@@ -17,10 +17,12 @@
 
   async function enterVR() {
     if (!renderer || !navigator.xr) return
+    let session: XRSession | undefined
     try {
-      const session = await navigator.xr.requestSession('immersive-vr')
+      session = await navigator.xr.requestSession('immersive-vr')
       await renderer.xr.setSession(session)
     } catch (e) {
+      session?.end().catch(() => {})
       error = `VR を開始できませんでした: ${e instanceof Error ? e.message : String(e)}`
     }
   }

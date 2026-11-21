@@ -32,7 +32,7 @@ vi.mock('./stereo', async (importOriginal) => ({
   loadTexture: async () => new Texture(),
 }))
 
-const session = { end: vi.fn() }
+const session = { end: vi.fn(async () => {}) }
 let component: ReturnType<typeof mount> | undefined
 
 function stubXr(supported: boolean) {
@@ -77,6 +77,20 @@ describe('StereoView', () => {
 
     expect(xr.requestSession).toHaveBeenCalledWith('immersive-vr')
     expect(renderer.setSession).toHaveBeenCalledWith(session)
+  })
+
+  it('ends the acquired session and shows the error when the renderer cannot start it', async () => {
+    stubXr(true)
+    renderer.setSession.mockRejectedValueOnce(new Error('layer failed'))
+    await render()
+
+    vrButton()!.click()
+    await tick()
+    await tick()
+    flushSync()
+
+    expect(session.end).toHaveBeenCalled()
+    expect(document.querySelector('[role="alert"]')?.textContent).toContain('layer failed')
   })
 
   it('faces the preview camera back to the photo when the VR session ends', async () => {
