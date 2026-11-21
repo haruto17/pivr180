@@ -35,6 +35,14 @@
     r.setPixelRatio(window.devicePixelRatio)
     resize()
     window.addEventListener('resize', resize)
+    const resetPreviewCamera = () => {
+      if (!stereo) return
+      stereo.camera.position.set(0, 0, 0)
+      stereo.camera.quaternion.identity()
+      stereo.camera.aspect = window.innerWidth / window.innerHeight
+      stereo.camera.updateProjectionMatrix()
+    }
+    r.xr.addEventListener('sessionend', resetPreviewCamera)
 
     loadTexture(src).then(
       (texture) => {
@@ -69,6 +77,7 @@
     return () => {
       destroyed = true
       window.removeEventListener('resize', resize)
+      r.xr.removeEventListener('sessionend', resetPreviewCamera)
       r.setAnimationLoop(null)
       void r.xr.getSession()?.end()
       stereo?.dispose()

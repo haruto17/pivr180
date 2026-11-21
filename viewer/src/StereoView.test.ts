@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { flushSync, mount, tick, unmount } from 'svelte'
-import { Texture } from 'three'
+import { PerspectiveCamera, Quaternion, Texture } from 'three'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import StereoView from './StereoView.svelte'
 
@@ -9,6 +9,7 @@ const renderer = vi.hoisted(() => ({
   setAnimationLoop: vi.fn(),
   dispose: vi.fn(),
   render: vi.fn(),
+  xrListeners: new Map<string, () => void>(),
 }))
 
 vi.mock('./stereo', async (importOriginal) => ({
@@ -19,6 +20,8 @@ vi.mock('./stereo', async (importOriginal) => ({
       setSession: renderer.setSession,
       setReferenceSpaceType: () => {},
       getSession: () => null,
+      addEventListener: (type: string, listener: () => void) => renderer.xrListeners.set(type, listener),
+      removeEventListener: (type: string) => renderer.xrListeners.delete(type),
     },
     setPixelRatio: () => {},
     setSize: () => {},
@@ -74,6 +77,31 @@ describe('StereoView', () => {
 
     expect(xr.requestSession).toHaveBeenCalledWith('immersive-vr')
     expect(renderer.setSession).toHaveBeenCalledWith(session)
+  })
+
+  it('faces the preview camera back to the photo when the VR session ends', async () => {
+    stubXr(true)
+    await render()
+    const loop = renderer.setAnimationLoop.mock.calls.at(-1)![0] as () => void
+    loop()
+    const camera = (renderer.render.mock.calls.at(-1) as unknown[])[1] as PerspectiveCamera
+    camera.position.set(0, 1.6, 0.2)
+    camera.rotation.set(0, Math.PI, 0)
+
+    renderer.xrListeners.get('sessionend')!()
+
+    expect(camera.position.toArray()).toEqual([0, 0, 0])
+    expect(camera.quaternion.equals(new Quaternion())).toBe(true)
+  })
+
+  it('stops listening for VR session end when destroyed', async () => {
+    stubXr(true)
+    await render()
+
+    unmount(component!)
+    component = undefined
+
+    expect(renderer.xrListeners.has('sessionend')).toBe(false)
   })
 
   it('shows a message instead of the button when immersive-vr is not supported', async () => {
