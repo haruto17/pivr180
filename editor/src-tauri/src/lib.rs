@@ -13,6 +13,7 @@ use correction::{CaptureCorrection, CorrectionOverride, ImageCircle, StereoCorre
 use server::ServerStatus;
 use std::net::{Ipv4Addr, SocketAddr};
 use std::path::PathBuf;
+use std::process::{Command, Stdio};
 use storage::{StoragePaths, StorageSettings};
 use tauri::{AppHandle, Manager};
 
@@ -308,6 +309,19 @@ fn get_viewer_server_status(status: tauri::State<'_, ServerStatus>) -> ServerSta
     status.inner().clone()
 }
 
+fn local_host_name() -> Option<String> {
+    // Not hostname::get() first: on macOS it can differ from the LocalHostName that Bonjour advertises as <name>.local.
+    Command::new("scutil")
+        .args(["--get", "LocalHostName"])
+        .stdin(Stdio::null())
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_string())
+        .filter(|name| !name.is_empty())
+        .or_else(|| hostname::get().ok()?.into_string().ok())
+}
+
 fn start_viewer_server(app: &AppHandle) -> Result<Vec<String>, String> {
     let home = app.path().home_dir().map_err(|e| e.to_string())?;
     let cert_dir = app
@@ -315,8 +329,8 @@ fn start_viewer_server(app: &AppHandle) -> Result<Vec<String>, String> {
         .app_config_dir()
         .map_err(|e| e.to_string())?
         .join("certs");
-    let hostname = hostname::get().ok();
-    let hostname = hostname.as_ref().and_then(|name| name.to_str());
+    let hostname = local_host_name();
+    let hostname = hostname.as_deref();
     certs::ensure_certificate(
         &cert_dir,
         &certs::cert_names(server::local_domain(hostname), certs::lan_ip()),
