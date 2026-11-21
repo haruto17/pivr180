@@ -3,11 +3,14 @@ mod correction;
 mod equirect;
 mod export;
 mod import;
+mod server;
 mod storage;
 
 use base64::Engine;
 use captures::Side;
 use correction::{CaptureCorrection, CorrectionOverride, ImageCircle, StereoCorrection};
+use server::ServerStatus;
+use std::net::{Ipv4Addr, SocketAddr};
 use std::path::PathBuf;
 use storage::{StoragePaths, StorageSettings};
 use tauri::{AppHandle, Manager};
@@ -299,9 +302,39 @@ async fn export_capture(app: AppHandle, id: String) -> Result<PathBuf, String> {
     .map_err(|e| e.to_string())?
 }
 
+#[tauri::command]
+fn get_viewer_server_status(status: tauri::State<'_, ServerStatus>) -> ServerStatus {
+    status.inner().clone()
+}
+
+fn start_viewer_server(app: &AppHandle) -> Result<Vec<String>, String> {
+    let home = app.path().home_dir().map_err(|e| e.to_string())?;
+    let cert_dir = app
+        .path()
+        .app_config_dir()
+        .map_err(|e| e.to_string())?
+        .join("certs");
+    let router = server::router::<server::ViewerAssets>(settings_path(app)?, home);
+    let addr = SocketAddr::from((Ipv4Addr::UNSPECIFIED, server::PORT));
+    let local_addr = tauri::async_runtime::block_on(server::serve(&cert_dir, addr, router))?;
+    let hostname = hostname::get().ok();
+    Ok(server::viewer_urls(
+        hostname.as_ref().and_then(|name| name.to_str()),
+        local_addr.port(),
+    ))
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .setup(|app| {
+            let status = match start_viewer_server(app.handle()) {
+                Ok(urls) => ServerStatus::running(urls),
+                Err(error) => ServerStatus::failed(error),
+            };
+            app.manage(status);
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             get_storage_settings,
             set_storage_settings,
@@ -320,7 +353,8 @@ pub fn run() {
             get_capture_correction,
             set_capture_correction,
             clear_capture_correction,
-            export_capture
+            export_capture,
+            get_viewer_server_status
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
