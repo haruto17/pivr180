@@ -99,7 +99,7 @@ async fn set_import_host(app: AppHandle, host: String) -> Result<String, String>
 }
 
 #[tauri::command]
-async fn import_captures(app: AppHandle) -> Result<Vec<String>, String> {
+async fn import_captures(app: AppHandle) -> Result<import::ImportResult, String> {
     let home = app.path().home_dir().map_err(|e| e.to_string())?;
     let path = settings_path(&app)?;
     tauri::async_runtime::spawn_blocking(move || {
@@ -107,6 +107,7 @@ async fn import_captures(app: AppHandle) -> Result<Vec<String>, String> {
         import::import_captures(
             &import::remote_source(&settings.host),
             &settings.captures_dir(),
+            settings.delete_after_import,
         )
     })
     .await
