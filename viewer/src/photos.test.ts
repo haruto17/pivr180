@@ -22,6 +22,12 @@ describe('fetchPhotos', () => {
     await expect(fetchPhotos(respond('oops', 500))).rejects.toThrow('HTTP 500')
   })
 
+  it('fails when the response is not JSON', async () => {
+    const fetchFn = vi.fn(async () => new Response('<!doctype html>', { status: 200 }))
+
+    await expect(fetchPhotos(fetchFn)).rejects.toThrow('形式が正しくありません')
+  })
+
   it.each([{}, null, [{ name: 'a_180_LR.jpg' }], [{ name: 1, url: '/photos/a_180_LR.jpg' }], [null]])(
     'fails when the response is not a list of photos: %j',
     async (body) => {

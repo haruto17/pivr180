@@ -9,7 +9,7 @@ function isPhoto(value: unknown): value is Photo {
 export async function fetchPhotos(fetchFn: typeof fetch = fetch): Promise<Photo[]> {
   const response = await fetchFn('/api/photos')
   if (!response.ok) throw new Error(`写真一覧を取得できませんでした（HTTP ${response.status}）`)
-  const body: unknown = await response.json()
+  const body: unknown = await response.json().catch(() => undefined)
   if (!Array.isArray(body) || !body.every(isPhoto)) throw new Error('写真一覧の形式が正しくありません')
   return body
 }
