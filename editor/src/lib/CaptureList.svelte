@@ -9,6 +9,7 @@
   let ids = $state<string[]>();
   let error = $state("");
   let loading = $state(false);
+  let generation = $state(0);
   let latestRequest = 0;
 
   async function load() {
@@ -17,7 +18,10 @@
     loading = true;
     try {
       const result = await listCaptures();
-      if (request === latestRequest) ids = result;
+      if (request === latestRequest) {
+        ids = result;
+        generation++;
+      }
     } catch (e) {
       if (request === latestRequest) {
         ids = undefined;
@@ -46,9 +50,11 @@
     <p>撮影がありません</p>
   {:else if ids}
     <ul>
-      {#each ids as id (id)}
-        <CaptureItem {id} />
-      {/each}
+      {#key generation}
+        {#each ids as id (id)}
+          <CaptureItem {id} />
+        {/each}
+      {/key}
     </ul>
   {/if}
 </section>
