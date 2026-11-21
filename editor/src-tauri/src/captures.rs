@@ -102,7 +102,9 @@ pub struct Preview {
 pub fn preview(captures_dir: &Path, cache_dir: &Path, id: &str, side: Side) -> io::Result<Preview> {
     let path = downscaled(
         captures_dir,
-        &cache_dir.join("previews"),
+        &cache_dir
+            .join("previews")
+            .join(captures_dir_key(captures_dir)?),
         PREVIEW_MAX_SIDE,
         id,
         side,
@@ -114,6 +116,19 @@ pub fn preview(captures_dir: &Path, cache_dir: &Path, id: &str, side: Side) -> i
         width,
         height,
     })
+}
+
+// Not std's DefaultHasher: its output may change between Rust releases, while FNV-1a is fixed.
+fn captures_dir_key(captures_dir: &Path) -> io::Result<String> {
+    let path = std::path::absolute(captures_dir)?;
+    let hash = path
+        .as_os_str()
+        .as_encoded_bytes()
+        .iter()
+        .fold(0xcbf2_9ce4_8422_2325_u64, |hash, &byte| {
+            (hash ^ u64::from(byte)).wrapping_mul(0x0000_0100_0000_01b3)
+        });
+    Ok(format!("{hash:016x}"))
 }
 
 fn downscaled(
@@ -415,7 +430,11 @@ mod tests {
 
         assert_eq!(
             preview.path,
-            cache.join("previews").join(id).join("left.jpg")
+            cache
+                .join("previews")
+                .join(captures_dir_key(&captures).unwrap())
+                .join(id)
+                .join("left.jpg")
         );
         assert_eq!(dimensions(&preview.path), (1024, 768));
         assert_eq!((preview.width, preview.height), (2048, 1536));
@@ -480,5 +499,45 @@ mod tests {
 
         assert_eq!(dimensions(&cached), (768, 1024));
         assert_eq!((preview.width, preview.height), (1536, 2048));
+    }
+
+    #[test]
+    fn previews_of_same_id_in_different_captures_dirs_are_cached_separately() {
+        let dir = tempdir().unwrap();
+        let first = dir.path().join("first").join("captures");
+        let second = dir.path().join("second").join("captures");
+        let cache = dir.path().join("cache");
+        let id = "20260101-090000-000";
+        write_jpeg(&first.join(id).join("left.jpg"), 2048, 1536);
+        write_jpeg(&second.join(id).join("left.jpg"), 1536, 2048);
+        let first_preview = preview(&first, &cache, id, Side::Left).unwrap();
+        set_modified(
+            &second.join(id).join("left.jpg"),
+            fs::metadata(&first_preview.path)
+                .unwrap()
+                .modified()
+                .unwrap()
+                - Duration::from_secs(10),
+        );
+
+        let second_preview = preview(&second, &cache, id, Side::Left).unwrap();
+
+        assert_ne!(second_preview.path, first_preview.path);
+        assert_eq!(dimensions(&second_preview.path), (768, 1024));
+        assert_eq!((second_preview.width, second_preview.height), (1536, 2048));
+        assert_eq!(dimensions(&first_preview.path), (1024, 768));
+    }
+
+    #[test]
+    fn captures_dir_key_is_a_fixed_hex_digest_of_the_absolute_path() {
+        let key = captures_dir_key(Path::new("/library/captures")).unwrap();
+
+        assert_eq!(key.len(), 16);
+        assert!(key.chars().all(|c| c.is_ascii_hexdigit()));
+        assert_eq!(
+            key,
+            captures_dir_key(Path::new("/library/captures")).unwrap()
+        );
+        assert_ne!(key, captures_dir_key(Path::new("/other/captures")).unwrap());
     }
 }
