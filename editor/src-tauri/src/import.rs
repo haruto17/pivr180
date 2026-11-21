@@ -10,6 +10,7 @@ static IMPORT_LOCK: Mutex<()> = Mutex::new(());
 pub const REMOTE_CAPTURES_DIR: &str = "/data/captures/";
 
 const CAPTURE_FILES: [&str; 3] = ["left.jpg", "right.jpg", "meta.json"];
+const META_FILE: &str = "meta.json";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -64,6 +65,13 @@ pub fn is_capture_id(name: &str) -> bool {
             .all(|(len, part)| part.len() == *len && part.bytes().all(|b| b.is_ascii_digit()))
 }
 
+pub fn is_complete_meta(content: &[u8]) -> bool {
+    // Not just is_file(): the device creates meta.json before writing it, so an empty or partial file can be imported mid-capture.
+    // The trailing newline is checked as well because the device writes json.dumps(...) + "\n" in one go, and a partial file cut just before it would still parse.
+    content.ends_with(b"\n")
+        && serde_json::from_slice::<serde_json::Map<String, serde_json::Value>>(content).is_ok()
+}
+
 pub fn removable_captures(imported: &[String], changed: &[String], dest: &Path) -> Vec<String> {
     imported
         .iter()
@@ -72,6 +80,9 @@ pub fn removable_captures(imported: &[String], changed: &[String], dest: &Path) 
             CAPTURE_FILES
                 .iter()
                 .all(|file| dest.join(name).join(file).is_file())
+        })
+        .filter(|name| {
+            fs::read(dest.join(name).join(META_FILE)).is_ok_and(|meta| is_complete_meta(&meta))
         })
         .cloned()
         .collect()
@@ -327,7 +338,12 @@ mod tests {
         let capture = dir.join(name);
         fs::create_dir_all(&capture).unwrap();
         for file in files {
-            fs::write(capture.join(file), name).unwrap();
+            let content = if *file == META_FILE {
+                format!("{{\n  \"id\": \"{name}\"\n}}\n")
+            } else {
+                name.to_string()
+            };
+            fs::write(capture.join(file), content).unwrap();
         }
     }
 
@@ -370,6 +386,44 @@ mod tests {
         ] {
             assert!(!is_capture_id(name), "{name:?}");
         }
+    }
+
+    #[test]
+    fn is_complete_meta_accepts_only_meta_written_to_the_end() {
+        let meta = b"{\n  \"schema_version\": 1\n}\n";
+        assert!(is_complete_meta(meta));
+        for len in 0..meta.len() {
+            assert!(!is_complete_meta(&meta[..len]), "{len}");
+        }
+        assert!(!is_complete_meta(b"[]\n"));
+    }
+
+    #[test]
+    fn removable_captures_skip_captures_whose_meta_is_still_being_written() {
+        let dir = tempdir().unwrap();
+        let all = ["left.jpg", "right.jpg", "meta.json"];
+        for (name, meta) in [
+            ("20260101-000000-001", ""),
+            ("20260101-000000-002", "{\n  \"schema_version\""),
+            ("20260101-000000-003", "{\n  \"schema_version\": 1\n}"),
+        ] {
+            write_capture(dir.path(), name, &all);
+            fs::write(dir.path().join(name).join(META_FILE), meta).unwrap();
+        }
+        write_capture(dir.path(), "20260101-000000-004", &all);
+
+        let removable = removable_captures(
+            &names(&[
+                "20260101-000000-001",
+                "20260101-000000-002",
+                "20260101-000000-003",
+                "20260101-000000-004",
+            ]),
+            &[],
+            dir.path(),
+        );
+
+        assert_eq!(removable, names(&["20260101-000000-004"]));
     }
 
     #[test]
@@ -459,36 +513,41 @@ mod tests {
         run_rsync(source.to_str().unwrap(), &dest).unwrap();
         write_capture(&source, "20260102-000000-001", &all);
         write_capture(&source, "20260102-000000-002", &["left.jpg"]);
+        write_capture(&source, "20260102-000000-003", &all);
+        fs::write(source.join("20260102-000000-003").join(META_FILE), "").unwrap();
+        let originals: Vec<Vec<u8>> = all
+            .iter()
+            .map(|file| fs::read(source.join("20260102-000000-001").join(file)).unwrap())
+            .collect();
 
         let result = run_import(source.to_str().unwrap(), &dest, true).unwrap();
 
         assert_eq!(
             result,
             ImportResult {
-                imported: names(&["20260102-000000-001", "20260102-000000-002"]),
+                imported: names(&[
+                    "20260102-000000-001",
+                    "20260102-000000-002",
+                    "20260102-000000-003",
+                ]),
                 removed: names(&["20260102-000000-001"]),
                 remove_error: None,
             }
         );
         assert!(!source.join("20260102-000000-001").exists());
-        for file in all {
+        for (file, original) in all.iter().zip(&originals) {
             assert_eq!(
-                fs::read_to_string(dest.join("20260102-000000-001").join(file)).unwrap(),
-                "20260102-000000-001"
+                &fs::read(dest.join("20260102-000000-001").join(file)).unwrap(),
+                original
             );
         }
-        assert!(
-            source
-                .join("20260101-000000-001")
-                .join("left.jpg")
-                .is_file()
-        );
-        assert!(
-            source
-                .join("20260102-000000-002")
-                .join("left.jpg")
-                .is_file()
-        );
+        for kept in [
+            "20260101-000000-001",
+            "20260102-000000-002",
+            "20260102-000000-003",
+        ] {
+            assert!(source.join(kept).join("left.jpg").is_file(), "{kept}");
+        }
     }
 
     #[test]
