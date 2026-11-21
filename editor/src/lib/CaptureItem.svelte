@@ -1,5 +1,6 @@
 <script lang="ts">
   import { getCaptureThumbnail, type Side } from "$lib/captures";
+  import ExportButton from "$lib/ExportButton.svelte";
 
   let { id }: { id: string } = $props();
 
@@ -51,6 +52,7 @@
       </figure>
     {/each}
   </div>
+  <ExportButton {id} />
 </li>
 
 <style>

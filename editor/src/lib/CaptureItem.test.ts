@@ -15,4 +15,11 @@ describe("CaptureItem.svelte", () => {
     );
     expect(body.match(/読み込み中…/g)).toHaveLength(2);
   });
+
+  it("shows an export button for the capture", () => {
+    const { body } = render(CaptureItem, {
+      props: { id: "20260101-090000-000" },
+    });
+    expect(body).toMatch(/<button type="button"[^>]*>書き出し<\/button>/);
+  });
 });
