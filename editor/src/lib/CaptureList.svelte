@@ -13,6 +13,7 @@
   let generation = $state(0);
   let editing = $state<string>();
   let latestRequest = 0;
+  let editingDir: string | undefined;
 
   async function load() {
     const request = ++latestRequest;
@@ -38,6 +39,13 @@
     void capturesDir;
     void reloadKey;
     untrack(load);
+  });
+
+  $effect(() => {
+    if (capturesDir !== editingDir) {
+      editingDir = capturesDir;
+      editing = undefined;
+    }
   });
 </script>
 

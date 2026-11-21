@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { invoke } from "@tauri-apps/api/core";
 import { flushSync, mount, tick, unmount } from "svelte";
+import { SvelteMap } from "svelte/reactivity";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import CaptureList from "./CaptureList.svelte";
 
@@ -16,6 +17,7 @@ const circle = {
 };
 
 let list: ReturnType<typeof mount>;
+let props: SvelteMap<string, string | number>;
 
 function settle() {
   return new Promise((resolve) => setTimeout(resolve)).then(tick);
@@ -57,7 +59,21 @@ beforeEach(async () => {
         return { dataUrl: "data:image/jpeg;base64,", width: 4056, height: 3040 };
     }
   });
-  list = mount(CaptureList, { target: document.body, props: {} });
+  props = new SvelteMap<string, string | number>([
+    ["capturesDir", "/old/captures"],
+    ["reloadKey", 0],
+  ]);
+  list = mount(CaptureList, {
+    target: document.body,
+    props: {
+      get capturesDir() {
+        return props.get("capturesDir") as string;
+      },
+      get reloadKey() {
+        return props.get("reloadKey") as number;
+      },
+    },
+  });
   await settle();
 });
 
@@ -88,6 +104,26 @@ describe("CaptureList.svelte correction", () => {
     expect(heading()).toBe(`補正: ${NEW_ID}`);
 
     await click(buttons("閉じる")[0]);
+
+    expect(heading()).toBeUndefined();
+  });
+
+  it("keeps the editor open when the list reloads after an import", async () => {
+    await click(buttons("補正")[1]);
+
+    props.set("reloadKey", 1);
+    flushSync();
+    await settle();
+
+    expect(heading()).toBe(`補正: ${OLD_ID}`);
+  });
+
+  it("closes the editor when the storage root changes", async () => {
+    await click(buttons("補正")[1]);
+
+    props.set("capturesDir", "/new/captures");
+    flushSync();
+    await settle();
 
     expect(heading()).toBeUndefined();
   });
