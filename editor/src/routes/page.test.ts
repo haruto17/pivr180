@@ -29,4 +29,10 @@ describe("+page.svelte", () => {
     expect(body).toContain('aria-label="接続先"');
     expect(body).toContain("取り込む</button>");
   });
+
+  it("renders the delete-after-import option unchecked", () => {
+    const { body } = render(Page);
+    expect(body).toContain('<input type="checkbox"/>');
+    expect(body).toContain("取り込み後に Pi から削除する");
+  });
 });
