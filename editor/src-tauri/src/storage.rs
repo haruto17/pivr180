@@ -1,12 +1,15 @@
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io;
+use std::ops::RangeInclusive;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, PoisonError};
 
 static CHANGE_ROOT_LOCK: Mutex<()> = Mutex::new(());
 
 pub const DEFAULT_HOST: &str = "pivr180.local";
+pub const DEFAULT_EXPORT_EYE_SIZE: u32 = 2880;
+pub const EXPORT_EYE_SIZE_RANGE: RangeInclusive<u32> = 256..=8192;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StorageSettings {
@@ -15,10 +18,31 @@ pub struct StorageSettings {
     pub host: String,
     #[serde(default)]
     pub delete_after_import: bool,
+    #[serde(default = "default_export_eye_size")]
+    pub export_eye_size: u32,
 }
 
 fn default_host() -> String {
     DEFAULT_HOST.to_string()
+}
+
+fn default_export_eye_size() -> u32 {
+    DEFAULT_EXPORT_EYE_SIZE
+}
+
+pub fn validate_export_eye_size(size: u32) -> io::Result<()> {
+    if EXPORT_EYE_SIZE_RANGE.contains(&size) {
+        Ok(())
+    } else {
+        Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!(
+                "片目の解像度は {}〜{} で指定してください: {size}",
+                EXPORT_EYE_SIZE_RANGE.start(),
+                EXPORT_EYE_SIZE_RANGE.end()
+            ),
+        ))
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -34,6 +58,7 @@ impl StorageSettings {
             root: home.join("Pictures").join("pivr180"),
             host: default_host(),
             delete_after_import: false,
+            export_eye_size: default_export_eye_size(),
         }
     }
 
@@ -134,6 +159,23 @@ impl StorageSettings {
         settings.save(path)?;
         Ok(settings)
     }
+
+    pub fn change_export_eye_size(
+        export_eye_size: u32,
+        path: &Path,
+        home: &Path,
+    ) -> io::Result<Self> {
+        validate_export_eye_size(export_eye_size)?;
+        let _guard = CHANGE_ROOT_LOCK
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let settings = Self {
+            export_eye_size,
+            ..Self::load(path, home)?
+        };
+        settings.save(path)?;
+        Ok(settings)
+    }
 }
 
 #[cfg(test)]
@@ -156,6 +198,7 @@ mod tests {
             root: PathBuf::from("/data/pivr180"),
             host: DEFAULT_HOST.to_string(),
             delete_after_import: false,
+            export_eye_size: 2880,
         };
         assert_eq!(
             settings.paths(),
@@ -196,6 +239,7 @@ mod tests {
             root: PathBuf::from("/Volumes/ext/pivr180"),
             host: DEFAULT_HOST.to_string(),
             delete_after_import: false,
+            export_eye_size: 2880,
         };
         settings.save(&path).unwrap();
         assert_eq!(
@@ -212,6 +256,7 @@ mod tests {
             root: PathBuf::from("/old/pivr180"),
             host: DEFAULT_HOST.to_string(),
             delete_after_import: false,
+            export_eye_size: 2880,
         }
         .save(&path)
         .unwrap();
@@ -219,6 +264,7 @@ mod tests {
             root: PathBuf::from("/new/pivr180"),
             host: DEFAULT_HOST.to_string(),
             delete_after_import: false,
+            export_eye_size: 2880,
         };
         settings.save(&path).unwrap();
         assert_eq!(
@@ -298,6 +344,7 @@ mod tests {
                 root: PathBuf::from("/Volumes/ext/pivr180"),
                 host: "pivr180.local".to_string(),
                 delete_after_import: false,
+                export_eye_size: 2880,
             }
         );
     }
@@ -317,6 +364,7 @@ mod tests {
                 root,
                 host: "pi@pivr180.local".to_string(),
                 delete_after_import: false,
+                export_eye_size: 2880,
             }
         );
         assert_eq!(
@@ -390,6 +438,7 @@ mod tests {
                 root,
                 host: "raspberrypi.local".to_string(),
                 delete_after_import: true,
+                export_eye_size: 2880,
             }
         );
         assert_eq!(
@@ -409,5 +458,88 @@ mod tests {
             StorageSettings::change_host("raspberrypi.local", &path, Path::new("/home/me"))
                 .unwrap();
         assert!(settings.delete_after_import);
+    }
+
+    #[test]
+    fn export_eye_size_is_2880_by_default() {
+        let settings = StorageSettings::default_for(Path::new("/home/me"));
+        assert_eq!(settings.export_eye_size, 2880);
+    }
+
+    #[test]
+    fn settings_saved_before_export_eye_size_existed_load_with_2880() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        fs::write(
+            &path,
+            r#"{"root": "/Volumes/ext/pivr180", "host": "raspberrypi.local", "delete_after_import": true}"#,
+        )
+        .unwrap();
+        let settings = StorageSettings::load(&path, Path::new("/home/me")).unwrap();
+        assert_eq!(settings.export_eye_size, 2880);
+        assert!(settings.delete_after_import);
+    }
+
+    #[test]
+    fn change_export_eye_size_saves_it_and_keeps_other_settings() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        let root = dir.path().join("library");
+        StorageSettings::change_root(root.clone(), &path, Path::new("/home/me")).unwrap();
+        StorageSettings::change_host("raspberrypi.local", &path, Path::new("/home/me")).unwrap();
+        StorageSettings::change_delete_after_import(true, &path, Path::new("/home/me")).unwrap();
+        let settings =
+            StorageSettings::change_export_eye_size(2048, &path, Path::new("/home/me")).unwrap();
+        assert_eq!(
+            settings,
+            StorageSettings {
+                root,
+                host: "raspberrypi.local".to_string(),
+                delete_after_import: true,
+                export_eye_size: 2048,
+            }
+        );
+        assert_eq!(
+            StorageSettings::load(&path, Path::new("/home/me")).unwrap(),
+            settings
+        );
+    }
+
+    #[test]
+    fn other_changes_keep_export_eye_size() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        StorageSettings::change_export_eye_size(1024, &path, Path::new("/home/me")).unwrap();
+        StorageSettings::change_root(dir.path().join("library"), &path, Path::new("/home/me"))
+            .unwrap();
+        StorageSettings::change_host("raspberrypi.local", &path, Path::new("/home/me")).unwrap();
+        let settings =
+            StorageSettings::change_delete_after_import(true, &path, Path::new("/home/me"))
+                .unwrap();
+        assert_eq!(settings.export_eye_size, 1024);
+    }
+
+    #[test]
+    fn export_eye_size_from_256_to_8192_is_accepted() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        for size in [256, 8192] {
+            let settings =
+                StorageSettings::change_export_eye_size(size, &path, Path::new("/home/me"))
+                    .unwrap();
+            assert_eq!(settings.export_eye_size, size);
+        }
+    }
+
+    #[test]
+    fn export_eye_size_out_of_range_is_rejected_and_not_saved() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        for size in [0, 255, 8193, u32::MAX] {
+            let err = StorageSettings::change_export_eye_size(size, &path, Path::new("/home/me"))
+                .unwrap_err();
+            assert_eq!(err.kind(), io::ErrorKind::InvalidInput, "{size}");
+        }
+        assert!(!path.exists());
     }
 }
