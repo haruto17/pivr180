@@ -22,4 +22,11 @@ describe("CaptureItem.svelte", () => {
     });
     expect(body).toMatch(/<button[^>]*type="button"[^>]*>補正<\/button>/);
   });
+
+  it("shows an export button for the capture", () => {
+    const { body } = render(CaptureItem, {
+      props: { id: "20260101-090000-000" },
+    });
+    expect(body).toMatch(/<button type="button"[^>]*>書き出し<\/button>/);
+  });
 });

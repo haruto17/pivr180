@@ -1,8 +1,7 @@
 mod captures;
 mod correction;
-// Not yet wired to a Tauri command; that lands with #36.
-#[cfg_attr(not(test), allow(dead_code))]
 mod equirect;
+mod export;
 mod import;
 mod storage;
 
@@ -161,6 +160,32 @@ async fn set_delete_after_import(app: AppHandle, enabled: bool) -> Result<bool, 
 }
 
 #[tauri::command]
+async fn get_export_eye_size(app: AppHandle) -> Result<u32, String> {
+    let home = app.path().home_dir().map_err(|e| e.to_string())?;
+    let path = settings_path(&app)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        StorageSettings::load(&path, &home)
+            .map(|settings| settings.export_eye_size)
+            .map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn set_export_eye_size(app: AppHandle, size: u32) -> Result<u32, String> {
+    let home = app.path().home_dir().map_err(|e| e.to_string())?;
+    let path = settings_path(&app)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        StorageSettings::change_export_eye_size(size, &path, &home)
+            .map(|settings| settings.export_eye_size)
+            .map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
 async fn import_captures(app: AppHandle) -> Result<import::ImportResult, String> {
     let home = app.path().home_dir().map_err(|e| e.to_string())?;
     let path = settings_path(&app)?;
@@ -255,6 +280,25 @@ async fn clear_capture_correction(app: AppHandle, id: String) -> Result<CaptureC
     .map_err(|e| e.to_string())?
 }
 
+#[tauri::command]
+async fn export_capture(app: AppHandle, id: String) -> Result<PathBuf, String> {
+    let home = app.path().home_dir().map_err(|e| e.to_string())?;
+    let path = settings_path(&app)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let settings = StorageSettings::load(&path, &home).map_err(|e| e.to_string())?;
+        export::export_capture(
+            &settings.captures_dir(),
+            &settings.corrections_dir(),
+            &settings.exports_dir(),
+            &id,
+            settings.export_eye_size,
+        )
+        .map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -268,12 +312,15 @@ pub fn run() {
             set_import_host,
             get_delete_after_import,
             set_delete_after_import,
+            get_export_eye_size,
+            set_export_eye_size,
             import_captures,
             get_device_correction,
             set_device_correction,
             get_capture_correction,
             set_capture_correction,
-            clear_capture_correction
+            clear_capture_correction,
+            export_capture
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

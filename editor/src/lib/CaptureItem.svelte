@@ -1,5 +1,6 @@
 <script lang="ts">
   import { getCaptureThumbnail, type Side } from "$lib/captures";
+  import ExportButton from "$lib/ExportButton.svelte";
 
   let { id, oncorrect }: { id: string; oncorrect?: () => void } = $props();
 
@@ -52,6 +53,7 @@
     {/each}
   </div>
   <button type="button" onclick={() => oncorrect?.()}>補正</button>
+  <ExportButton {id} />
 </li>
 
 <style>

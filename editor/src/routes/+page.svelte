@@ -14,6 +14,7 @@
     setImportHost,
     type ImportResult,
   } from "$lib/import";
+  import { getExportEyeSize, setExportEyeSize } from "$lib/export";
 
   let storage = $state<StoragePaths>();
   let rootInput = $state("");
@@ -26,6 +27,9 @@
   let removeRequested = $state(false);
   let importError = $state("");
   let importCount = $state(0);
+  let eyeSizeInput = $state<number>();
+  let savingEyeSize = $state(false);
+  let exportError = $state("");
 
   onMount(async () => {
     try {
@@ -44,6 +48,27 @@
       importError = String(e);
     }
   });
+
+  onMount(async () => {
+    try {
+      eyeSizeInput = await getExportEyeSize();
+    } catch (e) {
+      exportError = String(e);
+    }
+  });
+
+  async function saveEyeSize(event: SubmitEvent) {
+    event.preventDefault();
+    exportError = "";
+    savingEyeSize = true;
+    try {
+      eyeSizeInput = await setExportEyeSize(Number(eyeSizeInput));
+    } catch (e) {
+      exportError = String(e);
+    } finally {
+      savingEyeSize = false;
+    }
+  }
 
   async function saveRoot(event: SubmitEvent) {
     event.preventDefault();
@@ -128,6 +153,26 @@
     {/if}
     {#if importError}
       <p role="alert">{importError}</p>
+    {/if}
+  </section>
+
+  <section>
+    <h2>書き出し</h2>
+    <form onsubmit={saveEyeSize}>
+      <label>
+        片目の解像度（px）
+        <input
+          type="number"
+          min="256"
+          max="8192"
+          step="1"
+          bind:value={eyeSizeInput}
+        />
+      </label>
+      <button type="submit" disabled={savingEyeSize}>保存</button>
+    </form>
+    {#if exportError}
+      <p role="alert">{exportError}</p>
     {/if}
   </section>
 
