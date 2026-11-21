@@ -90,17 +90,80 @@ editor の起動時に、HTTPS サーバーをポート 8443（全インター�
 - `GET /photos/<ファイル名>`: `exports/` 直下の `*_180_LR.jpg` を `image/jpeg` で返す。それ以外（区切り文字を含む名前、存在しないファイルなど）は 404。
 - それ以外のパス: viewer の静的ファイル（`/` は `index.html`）。存在しなければ 404。
 
-証明書と秘密鍵は、アプリ設定ディレクトリ（macOS では `~/Library/Application Support/com.haruto17.pivr180.editor/`）の `certs/cert.pem` と `certs/key.pem`（PEM 形式）から読む。証明書の発行は今後対応する（#38）。それまでは mkcert で Mac の LAN IP と `.local` 名に対して発行したものを手動で置く。
+証明書と秘密鍵は、アプリ設定ディレクトリ（macOS では `~/Library/Application Support/com.haruto17.pivr180.editor/`）の `certs/cert.pem` と `certs/key.pem`（PEM 形式）から読む。
 
-```sh
-dir=~/Library/Application\ Support/com.haruto17.pivr180.editor/certs
-mkdir -p "$dir"
-mkcert -cert-file "$dir/cert.pem" -key-file "$dir/key.pem" "$(scutil --get LocalHostName).local" <Mac の LAN IP> localhost
-```
-
-画面の「viewer 配信」欄に、起動できたときは URL（`https://localhost:8443/` と `https://<ホスト名>.local:8443/`）、起動できなかったとき（証明書がない・読めない、ポートを使えない）はその理由を表示する。証明書を置いた後やポートを空けた後は editor を再起動する。
+画面の「viewer 配信」欄に、起動できたときは URL（`https://localhost:8443/` と `https://<ホスト名>.local:8443/`）、起動できなかったとき（mkcert がない・失敗した、証明書を読めない、ポートを使えない）はその理由を表示する。原因を取り除いた後は editor を再起動する。
 
 viewer の静的ファイルは `viewer/dist` から読む。リリースビルド（`pnpm tauri build`）は viewer をビルドしてから（`viewer/` で `pnpm install` しておく）バイナリに埋め込む。開発ビルド（`pnpm tauri dev`）は実行時にディスクの `viewer/dist` を読むので、事前に `viewer/` で `pnpm build` しておく（なければ 404 になる）。
+
+### 証明書の発行
+
+editor の起動時に `certs/cert.pem` と `certs/key.pem` の両方があれば、それをそのまま使う（再生成しない）。Quest で警告の承認やルート証明書の導入をやり直さずに済むようにするため。どちらかがなければ、mkcert で次の名前に対して発行し直す。
+
+- `<LocalHostName>.local`（`scutil --get LocalHostName` の値。取れなければホスト名の先頭のラベル）
+- Mac の LAN IP（既定の経路で使われるアドレス。ネットワークにつながっていなければ含めない）
+- `localhost`
+
+mkcert は PATH、`/opt/homebrew/bin`、`/usr/local/bin` の順に探す。事前に入れて、ローカル CA を作っておく。
+
+```sh
+brew install mkcert
+mkcert -install
+```
+
+次のときは `certs/` を削除してから editor を起動し直し、証明書を発行し直す。発行し直した後は、Quest で警告の承認をやり直す（ルート証明書を導入していれば不要）。
+
+- Mac の LAN IP やホスト名が変わったとき（IP や `.local` 名で開くと警告が出る）
+- 証明書の有効期限（発行から約 2 年 3 か月）が切れたとき
+
+```sh
+rm -r ~/Library/Application\ Support/com.haruto17.pivr180.editor/certs
+```
+
+### Quest 3 から開く
+
+次のいずれかで開く。WebXR は secure context でしか使えないため、HTTP では開けない。
+
+#### 警告を承認して開く
+
+1. Quest 3 と Mac を同じ LAN につなぐ。
+2. Quest 3 のブラウザで、「viewer 配信」欄の `https://<ホスト名>.local:8443/`（名前を解決できなければ `https://<Mac の LAN IP>:8443/`）を開く。
+3. 証明書の警告が出たら「詳細」を開き、そのサイトへ進む。証明書が変わらない限り、承認は一度でよい。
+
+#### ADB でルート証明書を導入して開く
+
+mkcert のルート証明書を Quest 3 に入れると、警告が出なくなる。
+
+1. Meta Horizon アプリで Quest 3 の開発者モードを有効にし、USB で Mac とつないで USB デバッグを許可する（`adb devices` に表示される）。
+2. ルート証明書を Quest 3 に送る。
+
+   ```sh
+   adb push "$(mkcert -CAROOT)/rootCA.pem" /sdcard/Download/pivr180-rootCA.crt
+   ```
+
+3. Android の設定画面を開く。
+
+   ```sh
+   adb shell am start -a android.settings.SECURITY_SETTINGS
+   ```
+
+4. Quest 3 の画面で「暗号化と認証情報」→「証明書のインストール」→「CA 証明書」を選び、`Download/pivr180-rootCA.crt` を選ぶ（画面ロックの設定を求められたら設定する）。
+5. ブラウザを開き直し、`https://<ホスト名>.local:8443/` を開く。警告が出る場合は、上の「警告を承認して開く」で開く。
+
+`mkcert -CAROOT` のディレクトリにある `rootCA-key.pem` は CA の秘密鍵なので、Quest 3 を含め、どこにも送らない。
+
+#### ADB ポート転送で開く
+
+`.local` 名を解決できないとき、または LAN を使えないときは、USB でつないだ Quest 3 の `localhost:8443` を Mac に転送する。LAN IP が変わっても使える。
+
+1. 上の手順 1 と同じく、USB デバッグを許可した状態でつなぐ。
+2. ポートを転送する（USB を抜くと解除される）。
+
+   ```sh
+   adb reverse tcp:8443 tcp:8443
+   ```
+
+3. Quest 3 のブラウザで `https://localhost:8443/` を開く。ルート証明書を導入していなければ、警告を承認する。
 
 ## テスト・lint
 
