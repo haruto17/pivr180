@@ -1,4 +1,7 @@
 mod captures;
+// Not yet wired to a Tauri command; that lands with #33.
+#[cfg_attr(not(test), allow(dead_code))]
+mod correction;
 mod import;
 mod storage;
 
