@@ -37,6 +37,11 @@ describe("+page.svelte", () => {
     expect(body).toMatch(/<input type="number" min="256" max="8192"/);
   });
 
+  it("renders the viewer server section", () => {
+    const { body } = render(Page);
+    expect(body).toContain("<h2>viewer 配信</h2>");
+  });
+
   it("renders the delete-after-import option unchecked", () => {
     const { body } = render(Page);
     expect(body).toContain('<input type="checkbox"/>');

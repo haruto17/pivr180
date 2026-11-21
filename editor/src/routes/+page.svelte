@@ -15,6 +15,10 @@
     type ImportResult,
   } from "$lib/import";
   import { getExportEyeSize, setExportEyeSize } from "$lib/export";
+  import {
+    getViewerServerStatus,
+    type ViewerServerStatus,
+  } from "$lib/viewerServer";
 
   let storage = $state<StoragePaths>();
   let rootInput = $state("");
@@ -30,6 +34,8 @@
   let eyeSizeInput = $state<number>();
   let savingEyeSize = $state(false);
   let exportError = $state("");
+  let viewerServer = $state<ViewerServerStatus>();
+  let viewerServerError = $state("");
 
   onMount(async () => {
     try {
@@ -54,6 +60,14 @@
       eyeSizeInput = await getExportEyeSize();
     } catch (e) {
       exportError = String(e);
+    }
+  });
+
+  onMount(async () => {
+    try {
+      viewerServer = await getViewerServerStatus();
+    } catch (e) {
+      viewerServerError = String(e);
     }
   });
 
@@ -173,6 +187,22 @@
     </form>
     {#if exportError}
       <p role="alert">{exportError}</p>
+    {/if}
+  </section>
+
+  <section>
+    <h2>viewer 配信</h2>
+    {#if viewerServer?.running}
+      <ul>
+        {#each viewerServer.urls as url (url)}
+          <li><code>{url}</code></li>
+        {/each}
+      </ul>
+    {:else if viewerServer}
+      <p role="alert">viewer を配信できません: {viewerServer.error}</p>
+    {/if}
+    {#if viewerServerError}
+      <p role="alert">{viewerServerError}</p>
     {/if}
   </section>
 
