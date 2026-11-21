@@ -1,4 +1,5 @@
 mod captures;
+mod certs;
 mod correction;
 mod equirect;
 mod export;
@@ -314,14 +315,17 @@ fn start_viewer_server(app: &AppHandle) -> Result<Vec<String>, String> {
         .app_config_dir()
         .map_err(|e| e.to_string())?
         .join("certs");
+    let hostname = hostname::get().ok();
+    let hostname = hostname.as_ref().and_then(|name| name.to_str());
+    certs::ensure_certificate(
+        &cert_dir,
+        &certs::cert_names(server::local_domain(hostname), certs::lan_ip()),
+        certs::run_mkcert,
+    )?;
     let router = server::router::<server::ViewerAssets>(settings_path(app)?, home);
     let addr = SocketAddr::from((Ipv4Addr::UNSPECIFIED, server::PORT));
     let local_addr = tauri::async_runtime::block_on(server::serve(&cert_dir, addr, router))?;
-    let hostname = hostname::get().ok();
-    Ok(server::viewer_urls(
-        hostname.as_ref().and_then(|name| name.to_str()),
-        local_addr.port(),
-    ))
+    Ok(server::viewer_urls(hostname, local_addr.port()))
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
