@@ -11,6 +11,7 @@ pub const REMOTE_CAPTURES_DIR: &str = "/data/captures/";
 
 const CAPTURE_FILES: [&str; 3] = ["left.jpg", "right.jpg", "meta.json"];
 const META_FILE: &str = "meta.json";
+pub const REMOVE_BATCH_SIZE: usize = 100;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -145,28 +146,45 @@ fn run_import(
         remove_error: None,
     };
     if delete_after_import && !result.imported.is_empty() {
-        match remove_imported(source, dest, &result.imported) {
-            Ok(removed) => result.removed = removed,
-            Err(e) => result.remove_error = Some(e),
-        }
+        (result.removed, result.remove_error) = remove_imported(source, dest, &result.imported);
     }
     Ok(result)
 }
 
-fn remove_imported(source: &str, dest: &Path, imported: &[String]) -> Result<Vec<String>, String> {
-    let changed = rsync(verify_args(source, dest))
-        .map_err(|e| format!("削除前の確認に失敗したため、Pi から削除しませんでした: {e}"))?;
+fn remove_imported(
+    source: &str,
+    dest: &Path,
+    imported: &[String],
+) -> (Vec<String>, Option<String>) {
+    let changed = match rsync(verify_args(source, dest)) {
+        Ok(changed) => changed,
+        Err(e) => {
+            return (
+                Vec::new(),
+                Some(format!(
+                    "削除前の確認に失敗したため、Pi から削除しませんでした: {e}"
+                )),
+            );
+        }
+    };
     let removable = removable_captures(imported, &changed, dest);
-    remove_from_source(source, &removable).map_err(|e| {
-        format!("Pi から削除できませんでした（一部は削除されている可能性があります）: {e}")
-    })?;
-    Ok(removable)
+    let mut removed = Vec::new();
+    // Not one command for all captures: thousands of paths in one ssh argument exceed the OS argument limit.
+    for batch in removable.chunks(REMOVE_BATCH_SIZE) {
+        if let Err(e) = remove_from_source(source, batch) {
+            return (
+                removed,
+                Some(format!(
+                    "Pi からの削除が途中で失敗しました（残りの一部は削除されている可能性があります）: {e}"
+                )),
+            );
+        }
+        removed.extend_from_slice(batch);
+    }
+    (removed, None)
 }
 
 fn remove_from_source(source: &str, names: &[String]) -> Result<(), String> {
-    if names.is_empty() {
-        return Ok(());
-    }
     let Some(host) = remote_host(source) else {
         for name in names {
             fs::remove_dir_all(Path::new(source).join(name)).map_err(|e| e.to_string())?;
@@ -586,12 +604,54 @@ mod tests {
         assert_eq!(result.imported, names(&["20260101-000000-001"]));
         assert_eq!(result.removed, Vec::<String>::new());
         let err = result.remove_error.unwrap();
-        assert!(err.contains("Pi から削除できませんでした"), "{err}");
+        assert!(err.contains("Pi からの削除が途中で失敗しました"), "{err}");
         assert!(
             source
                 .join("20260101-000000-001")
                 .join("left.jpg")
                 .is_file()
         );
+    }
+
+    #[test]
+    fn ssh_remove_args_for_a_full_batch_stay_well_within_argument_limits() {
+        let ids: Vec<String> = (0..REMOVE_BATCH_SIZE)
+            .map(|i| format!("20260101-000000-{:03}", i % 1000))
+            .collect();
+        let args = ssh_remove_args("pi@pivr180.local", &ids);
+        assert!(args.last().unwrap().len() < 4096);
+    }
+
+    #[test]
+    fn removal_runs_in_batches_and_reports_captures_removed_before_a_failed_batch() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempdir().unwrap();
+        let source = dir.path().join("pi").join("captures");
+        let all = ["left.jpg", "right.jpg", "meta.json"];
+        let ids: Vec<String> = (0..REMOVE_BATCH_SIZE * 2 + 50)
+            .map(|i| format!("20260101-{:06}-000", i))
+            .collect();
+        for id in &ids {
+            write_capture(&source, id, &all);
+        }
+        let locked = source.join(&ids[REMOVE_BATCH_SIZE * 2 + 10]);
+        fs::set_permissions(&locked, fs::Permissions::from_mode(0o555)).unwrap();
+        let dest = dir.path().join("library").join("captures");
+
+        let result = run_import(source.to_str().unwrap(), &dest, true);
+        let locked_copy = dest.join(&ids[REMOVE_BATCH_SIZE * 2 + 10]);
+        for path in [&locked, &locked_copy] {
+            fs::set_permissions(path, fs::Permissions::from_mode(0o755)).unwrap();
+        }
+
+        let result = result.unwrap();
+        assert_eq!(result.imported, ids);
+        assert_eq!(result.removed, ids[..REMOVE_BATCH_SIZE * 2]);
+        let err = result.remove_error.unwrap();
+        assert!(err.contains("Pi からの削除が途中で失敗しました"), "{err}");
+        for id in &ids[..REMOVE_BATCH_SIZE * 2] {
+            assert!(!source.join(id).exists(), "{id}");
+        }
+        assert!(locked.join("left.jpg").is_file());
     }
 }
