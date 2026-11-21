@@ -12,7 +12,7 @@ pnpm dev
 表示する写真の URL を `?photo=` で指定する（ギャラリー #39 ができるまでの暫定）。
 
 ```
-https://<host>/?photo=/exports/20260101-090000-000.jpg
+https://<host>:8443/?photo=/photos/20260101-090000-000_180_LR.jpg
 ```
 
 WebXR に対応したブラウザでは「VR で見る」ボタンから immersive-vr で表示する。
