@@ -13,6 +13,8 @@ pub struct StorageSettings {
     pub root: PathBuf,
     #[serde(default = "default_host")]
     pub host: String,
+    #[serde(default)]
+    pub delete_after_import: bool,
 }
 
 fn default_host() -> String {
@@ -31,6 +33,7 @@ impl StorageSettings {
         Self {
             root: home.join("Pictures").join("pivr180"),
             host: default_host(),
+            delete_after_import: false,
         }
     }
 
@@ -111,6 +114,22 @@ impl StorageSettings {
         settings.save(path)?;
         Ok(settings)
     }
+
+    pub fn change_delete_after_import(
+        delete_after_import: bool,
+        path: &Path,
+        home: &Path,
+    ) -> io::Result<Self> {
+        let _guard = CHANGE_ROOT_LOCK
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let settings = Self {
+            delete_after_import,
+            ..Self::load(path, home)?
+        };
+        settings.save(path)?;
+        Ok(settings)
+    }
 }
 
 #[cfg(test)]
@@ -132,6 +151,7 @@ mod tests {
         let settings = StorageSettings {
             root: PathBuf::from("/data/pivr180"),
             host: DEFAULT_HOST.to_string(),
+            delete_after_import: false,
         };
         assert_eq!(
             settings.paths(),
@@ -162,6 +182,7 @@ mod tests {
         let settings = StorageSettings {
             root: PathBuf::from("/Volumes/ext/pivr180"),
             host: DEFAULT_HOST.to_string(),
+            delete_after_import: false,
         };
         settings.save(&path).unwrap();
         assert_eq!(
@@ -177,12 +198,14 @@ mod tests {
         StorageSettings {
             root: PathBuf::from("/old/pivr180"),
             host: DEFAULT_HOST.to_string(),
+            delete_after_import: false,
         }
         .save(&path)
         .unwrap();
         let settings = StorageSettings {
             root: PathBuf::from("/new/pivr180"),
             host: DEFAULT_HOST.to_string(),
+            delete_after_import: false,
         };
         settings.save(&path).unwrap();
         assert_eq!(
@@ -261,6 +284,7 @@ mod tests {
             StorageSettings {
                 root: PathBuf::from("/Volumes/ext/pivr180"),
                 host: "pivr180.local".to_string(),
+                delete_after_import: false,
             }
         );
     }
@@ -279,6 +303,7 @@ mod tests {
             StorageSettings {
                 root,
                 host: "pi@pivr180.local".to_string(),
+                delete_after_import: false,
             }
         );
         assert_eq!(
@@ -314,5 +339,62 @@ mod tests {
             assert_eq!(err.kind(), io::ErrorKind::InvalidInput, "{host:?}");
         }
         assert!(!path.exists());
+    }
+
+    #[test]
+    fn delete_after_import_is_off_by_default() {
+        let settings = StorageSettings::default_for(Path::new("/home/me"));
+        assert!(!settings.delete_after_import);
+    }
+
+    #[test]
+    fn settings_saved_before_delete_after_import_existed_load_with_it_off() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        fs::write(
+            &path,
+            r#"{"root": "/Volumes/ext/pivr180", "host": "raspberrypi.local"}"#,
+        )
+        .unwrap();
+        let settings = StorageSettings::load(&path, Path::new("/home/me")).unwrap();
+        assert!(!settings.delete_after_import);
+        assert_eq!(settings.host, "raspberrypi.local");
+    }
+
+    #[test]
+    fn change_delete_after_import_saves_it_and_keeps_root_and_host() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        let root = dir.path().join("library");
+        StorageSettings::change_root(root.clone(), &path, Path::new("/home/me")).unwrap();
+        StorageSettings::change_host("raspberrypi.local", &path, Path::new("/home/me")).unwrap();
+        let settings =
+            StorageSettings::change_delete_after_import(true, &path, Path::new("/home/me"))
+                .unwrap();
+        assert_eq!(
+            settings,
+            StorageSettings {
+                root,
+                host: "raspberrypi.local".to_string(),
+                delete_after_import: true,
+            }
+        );
+        assert_eq!(
+            StorageSettings::load(&path, Path::new("/home/me")).unwrap(),
+            settings
+        );
+    }
+
+    #[test]
+    fn change_root_and_host_keep_delete_after_import() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        StorageSettings::change_delete_after_import(true, &path, Path::new("/home/me")).unwrap();
+        StorageSettings::change_root(dir.path().join("library"), &path, Path::new("/home/me"))
+            .unwrap();
+        let settings =
+            StorageSettings::change_host("raspberrypi.local", &path, Path::new("/home/me"))
+                .unwrap();
+        assert!(settings.delete_after_import);
     }
 }
