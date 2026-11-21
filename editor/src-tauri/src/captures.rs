@@ -86,7 +86,9 @@ pub fn thumbnail(
 ) -> io::Result<PathBuf> {
     downscaled(
         captures_dir,
-        &cache_dir.join("thumbnails"),
+        &cache_dir
+            .join("thumbnails")
+            .join(captures_dir_key(captures_dir)?),
         THUMBNAIL_MAX_SIDE,
         id,
         side,
@@ -332,7 +334,14 @@ mod tests {
 
         let cached = thumbnail(&captures, &cache, id, Side::Right).unwrap();
 
-        assert_eq!(cached, cache.join("thumbnails").join(id).join("right.jpg"));
+        assert_eq!(
+            cached,
+            cache
+                .join("thumbnails")
+                .join(captures_dir_key(&captures).unwrap())
+                .join(id)
+                .join("right.jpg")
+        );
         assert_eq!(dimensions(&cached), (320, 240));
         let mut capture_files: Vec<_> = fs::read_dir(captures.join(id))
             .unwrap()
@@ -386,6 +395,28 @@ mod tests {
         thumbnail(&captures, &cache, id, Side::Left).unwrap();
 
         assert_eq!(dimensions(&cached), (240, 320));
+    }
+
+    #[test]
+    fn thumbnails_of_same_id_in_different_captures_dirs_are_cached_separately() {
+        let dir = tempdir().unwrap();
+        let first = dir.path().join("first").join("captures");
+        let second = dir.path().join("second").join("captures");
+        let cache = dir.path().join("cache");
+        let id = "20260101-090000-000";
+        write_jpeg(&first.join(id).join("left.jpg"), 640, 480);
+        write_jpeg(&second.join(id).join("left.jpg"), 480, 640);
+        let first_thumbnail = thumbnail(&first, &cache, id, Side::Left).unwrap();
+        set_modified(
+            &second.join(id).join("left.jpg"),
+            fs::metadata(&first_thumbnail).unwrap().modified().unwrap() - Duration::from_secs(10),
+        );
+
+        let second_thumbnail = thumbnail(&second, &cache, id, Side::Left).unwrap();
+
+        assert_ne!(second_thumbnail, first_thumbnail);
+        assert_eq!(dimensions(&second_thumbnail), (240, 320));
+        assert_eq!(dimensions(&first_thumbnail), (320, 240));
     }
 
     #[test]
