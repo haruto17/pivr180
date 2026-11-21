@@ -1,12 +1,11 @@
 mod captures;
-// Not yet wired to a Tauri command; that lands with #33.
-#[cfg_attr(not(test), allow(dead_code))]
 mod correction;
 mod import;
 mod storage;
 
 use base64::Engine;
 use captures::Side;
+use correction::{CaptureCorrection, CorrectionOverride, ImageCircle, StereoCorrection};
 use std::path::PathBuf;
 use storage::{StoragePaths, StorageSettings};
 use tauri::{AppHandle, Manager};
@@ -143,6 +142,85 @@ async fn import_captures(app: AppHandle) -> Result<import::ImportResult, String>
     .map_err(|e| e.to_string())?
 }
 
+#[tauri::command]
+async fn get_device_correction(app: AppHandle) -> Result<StereoCorrection, String> {
+    let home = app.path().home_dir().map_err(|e| e.to_string())?;
+    let path = settings_path(&app)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let settings = StorageSettings::load(&path, &home).map_err(|e| e.to_string())?;
+        correction::load_device_default(&settings.corrections_dir()).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn set_device_correction(
+    app: AppHandle,
+    left: ImageCircle,
+    right: ImageCircle,
+) -> Result<StereoCorrection, String> {
+    let home = app.path().home_dir().map_err(|e| e.to_string())?;
+    let path = settings_path(&app)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let settings = StorageSettings::load(&path, &home).map_err(|e| e.to_string())?;
+        let dir = settings.corrections_dir();
+        correction::save_device_default(&dir, StereoCorrection { left, right })
+            .and_then(|()| correction::load_device_default(&dir))
+            .map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn get_capture_correction(app: AppHandle, id: String) -> Result<CaptureCorrection, String> {
+    let home = app.path().home_dir().map_err(|e| e.to_string())?;
+    let path = settings_path(&app)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let settings = StorageSettings::load(&path, &home).map_err(|e| e.to_string())?;
+        correction::load_capture_correction(&settings.corrections_dir(), &id)
+            .map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn set_capture_correction(
+    app: AppHandle,
+    id: String,
+    left: Option<ImageCircle>,
+    right: Option<ImageCircle>,
+) -> Result<CaptureCorrection, String> {
+    let home = app.path().home_dir().map_err(|e| e.to_string())?;
+    let path = settings_path(&app)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let settings = StorageSettings::load(&path, &home).map_err(|e| e.to_string())?;
+        let dir = settings.corrections_dir();
+        correction::save_capture_override(&dir, &id, CorrectionOverride { left, right })
+            .and_then(|()| correction::load_capture_correction(&dir, &id))
+            .map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn clear_capture_correction(app: AppHandle, id: String) -> Result<CaptureCorrection, String> {
+    let home = app.path().home_dir().map_err(|e| e.to_string())?;
+    let path = settings_path(&app)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let settings = StorageSettings::load(&path, &home).map_err(|e| e.to_string())?;
+        let dir = settings.corrections_dir();
+        correction::clear_capture_override(&dir, &id)
+            .and_then(|()| correction::load_capture_correction(&dir, &id))
+            .map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -155,7 +233,12 @@ pub fn run() {
             set_import_host,
             get_delete_after_import,
             set_delete_after_import,
-            import_captures
+            import_captures,
+            get_device_correction,
+            set_device_correction,
+            get_capture_correction,
+            set_capture_correction,
+            clear_capture_correction
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
