@@ -8,6 +8,7 @@ use std::sync::{Condvar, Mutex, PoisonError};
 use std::thread;
 
 pub const THUMBNAIL_MAX_SIDE: u32 = 320;
+pub const PREVIEW_MAX_SIDE: u32 = 1024;
 const THUMBNAIL_QUALITY: u8 = 85;
 
 static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -83,13 +84,64 @@ pub fn thumbnail(
     id: &str,
     side: Side,
 ) -> io::Result<PathBuf> {
+    downscaled(
+        captures_dir,
+        &cache_dir.join("thumbnails"),
+        THUMBNAIL_MAX_SIDE,
+        id,
+        side,
+    )
+}
+
+pub struct Preview {
+    pub path: PathBuf,
+    pub width: u32,
+    pub height: u32,
+}
+
+pub fn preview(captures_dir: &Path, cache_dir: &Path, id: &str, side: Side) -> io::Result<Preview> {
+    let path = downscaled(
+        captures_dir,
+        &cache_dir
+            .join("previews")
+            .join(captures_dir_key(captures_dir)?),
+        PREVIEW_MAX_SIDE,
+        id,
+        side,
+    )?;
+    let (width, height) = image::image_dimensions(captures_dir.join(id).join(side.image_file()))
+        .map_err(io::Error::other)?;
+    Ok(Preview {
+        path,
+        width,
+        height,
+    })
+}
+
+// Not std's DefaultHasher: its output may change between Rust releases, while FNV-1a is fixed.
+fn captures_dir_key(captures_dir: &Path) -> io::Result<String> {
+    let path = std::path::absolute(captures_dir)?;
+    let hash = path
+        .as_os_str()
+        .as_encoded_bytes()
+        .iter()
+        .fold(0xcbf2_9ce4_8422_2325_u64, |hash, &byte| {
+            (hash ^ u64::from(byte)).wrapping_mul(0x0000_0100_0000_01b3)
+        });
+    Ok(format!("{hash:016x}"))
+}
+
+fn downscaled(
+    captures_dir: &Path,
+    cache_dir: &Path,
+    max_side: u32,
+    id: &str,
+    side: Side,
+) -> io::Result<PathBuf> {
     validate_id(id)?;
     let source = captures_dir.join(id).join(side.image_file());
     let source_modified = fs::metadata(&source)?.modified()?;
-    let cached = cache_dir
-        .join("thumbnails")
-        .join(id)
-        .join(side.image_file());
+    let cached = cache_dir.join(id).join(side.image_file());
     match fs::metadata(&cached) {
         Ok(meta) if meta.modified()? >= source_modified => return Ok(cached),
         Ok(_) => {}
@@ -97,15 +149,13 @@ pub fn thumbnail(
         Err(e) => return Err(e),
     }
     let _slot = GenerationSlot::acquire();
-    generate(&source, &cached)?;
+    generate(&source, &cached, max_side)?;
     Ok(cached)
 }
 
-fn generate(source: &Path, cached: &Path) -> io::Result<()> {
+fn generate(source: &Path, cached: &Path, max_side: u32) -> io::Result<()> {
     let image = image::open(source).map_err(io::Error::other)?;
-    let thumbnail = image
-        .thumbnail(THUMBNAIL_MAX_SIDE, THUMBNAIL_MAX_SIDE)
-        .into_rgb8();
+    let thumbnail = image.thumbnail(max_side, max_side).into_rgb8();
     let dir = cached.parent().expect("cached thumbnail path has a parent");
     fs::create_dir_all(dir)?;
     // Not written to `cached` directly: a concurrent reader could be served a half-written file.
@@ -336,5 +386,158 @@ mod tests {
         thumbnail(&captures, &cache, id, Side::Left).unwrap();
 
         assert_eq!(dimensions(&cached), (240, 320));
+    }
+
+    #[test]
+    fn preview_rejects_ids_that_could_escape_captures_dir() {
+        let dir = tempdir().unwrap();
+        let captures = dir.path().join("library").join("captures");
+        let cache = dir.path().join("cache");
+        write_jpeg(&dir.path().join("library").join("left.jpg"), 8, 8);
+        for id in ["", ".", "..", "../captures", "a/b", "a\\b", "/etc"] {
+            let err = preview(&captures, &cache, id, Side::Left).err().unwrap();
+            assert_eq!(err.kind(), io::ErrorKind::InvalidInput, "id {id:?}");
+        }
+        assert!(!cache.exists());
+    }
+
+    #[test]
+    fn preview_of_missing_capture_is_not_found() {
+        let dir = tempdir().unwrap();
+        let cache = dir.path().join("cache");
+        let err = preview(
+            &dir.path().join("captures"),
+            &cache,
+            "20260101-090000-000",
+            Side::Left,
+        )
+        .err()
+        .unwrap();
+        assert_eq!(err.kind(), io::ErrorKind::NotFound);
+        assert!(!cache.exists());
+    }
+
+    #[test]
+    fn preview_is_downscaled_to_long_side_1024_and_reports_original_size() {
+        let dir = tempdir().unwrap();
+        let captures = dir.path().join("captures");
+        let cache = dir.path().join("cache");
+        let id = "20260101-090000-000";
+        write_jpeg(&captures.join(id).join("left.jpg"), 2048, 1536);
+        write_jpeg(&captures.join(id).join("right.jpg"), 2048, 1536);
+
+        let preview = preview(&captures, &cache, id, Side::Left).unwrap();
+
+        assert_eq!(
+            preview.path,
+            cache
+                .join("previews")
+                .join(captures_dir_key(&captures).unwrap())
+                .join(id)
+                .join("left.jpg")
+        );
+        assert_eq!(dimensions(&preview.path), (1024, 768));
+        assert_eq!((preview.width, preview.height), (2048, 1536));
+        let mut capture_files: Vec<_> = fs::read_dir(captures.join(id))
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect();
+        capture_files.sort();
+        assert_eq!(capture_files, vec!["left.jpg", "right.jpg"]);
+    }
+
+    #[test]
+    fn preview_and_thumbnail_are_cached_separately() {
+        let dir = tempdir().unwrap();
+        let captures = dir.path().join("captures");
+        let cache = dir.path().join("cache");
+        let id = "20260101-090000-000";
+        add_capture(&captures, id);
+
+        let thumbnail = thumbnail(&captures, &cache, id, Side::Right).unwrap();
+        let preview = preview(&captures, &cache, id, Side::Right).unwrap();
+
+        assert_eq!(dimensions(&thumbnail), (320, 240));
+        assert_eq!(dimensions(&preview.path), (1024, 768));
+    }
+
+    #[test]
+    fn cached_preview_is_reused_while_source_is_unchanged() {
+        let dir = tempdir().unwrap();
+        let captures = dir.path().join("captures");
+        let cache = dir.path().join("cache");
+        let id = "20260101-090000-000";
+        add_capture(&captures, id);
+        let cached = preview(&captures, &cache, id, Side::Left).unwrap().path;
+        let marker = b"cached preview".to_vec();
+        fs::write(&cached, &marker).unwrap();
+
+        assert_eq!(
+            preview(&captures, &cache, id, Side::Left).unwrap().path,
+            cached
+        );
+
+        assert_eq!(fs::read(&cached).unwrap(), marker);
+    }
+
+    #[test]
+    fn preview_is_regenerated_when_source_is_newer_than_cache() {
+        let dir = tempdir().unwrap();
+        let captures = dir.path().join("captures");
+        let cache = dir.path().join("cache");
+        let id = "20260101-090000-000";
+        add_capture(&captures, id);
+        let cached = preview(&captures, &cache, id, Side::Left).unwrap().path;
+        let source = captures.join(id).join("left.jpg");
+        write_jpeg(&source, 1536, 2048);
+        set_modified(
+            &source,
+            fs::metadata(&cached).unwrap().modified().unwrap() + Duration::from_secs(10),
+        );
+
+        let preview = preview(&captures, &cache, id, Side::Left).unwrap();
+
+        assert_eq!(dimensions(&cached), (768, 1024));
+        assert_eq!((preview.width, preview.height), (1536, 2048));
+    }
+
+    #[test]
+    fn previews_of_same_id_in_different_captures_dirs_are_cached_separately() {
+        let dir = tempdir().unwrap();
+        let first = dir.path().join("first").join("captures");
+        let second = dir.path().join("second").join("captures");
+        let cache = dir.path().join("cache");
+        let id = "20260101-090000-000";
+        write_jpeg(&first.join(id).join("left.jpg"), 2048, 1536);
+        write_jpeg(&second.join(id).join("left.jpg"), 1536, 2048);
+        let first_preview = preview(&first, &cache, id, Side::Left).unwrap();
+        set_modified(
+            &second.join(id).join("left.jpg"),
+            fs::metadata(&first_preview.path)
+                .unwrap()
+                .modified()
+                .unwrap()
+                - Duration::from_secs(10),
+        );
+
+        let second_preview = preview(&second, &cache, id, Side::Left).unwrap();
+
+        assert_ne!(second_preview.path, first_preview.path);
+        assert_eq!(dimensions(&second_preview.path), (768, 1024));
+        assert_eq!((second_preview.width, second_preview.height), (1536, 2048));
+        assert_eq!(dimensions(&first_preview.path), (1024, 768));
+    }
+
+    #[test]
+    fn captures_dir_key_is_a_fixed_hex_digest_of_the_absolute_path() {
+        let key = captures_dir_key(Path::new("/library/captures")).unwrap();
+
+        assert_eq!(key.len(), 16);
+        assert!(key.chars().all(|c| c.is_ascii_hexdigit()));
+        assert_eq!(
+            key,
+            captures_dir_key(Path::new("/library/captures")).unwrap()
+        );
+        assert_ne!(key, captures_dir_key(Path::new("/other/captures")).unwrap());
     }
 }

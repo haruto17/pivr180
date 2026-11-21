@@ -1,6 +1,10 @@
 import { invoke } from "@tauri-apps/api/core";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { getCaptureThumbnail, listCaptures } from "./captures";
+import {
+  getCapturePreview,
+  getCaptureThumbnail,
+  listCaptures,
+} from "./captures";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 
@@ -25,6 +29,22 @@ describe("captures", () => {
     expect(invoke).toHaveBeenCalledWith("capture_thumbnail", {
       id: "20260101-090000-000",
       side: "right",
+    });
+  });
+
+  it("requests the preview of one side of a capture with its original size", async () => {
+    const preview = {
+      dataUrl: "data:image/jpeg;base64,AAAA",
+      width: 4056,
+      height: 3040,
+    };
+    vi.mocked(invoke).mockResolvedValue(preview);
+    await expect(
+      getCapturePreview("20260101-090000-000", "left"),
+    ).resolves.toEqual(preview);
+    expect(invoke).toHaveBeenCalledWith("capture_preview", {
+      id: "20260101-090000-000",
+      side: "left",
     });
   });
 });
