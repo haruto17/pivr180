@@ -116,9 +116,9 @@
     {/if}
     {#if result}
       <p>{result.imported.length} 件の撮影データを取り込みました</p>
-      {#if removeRequested && result.imported.length > 0 && !result.removeError}
+      {#if removeRequested && result.imported.length > 0}
         <p>{result.removed.length} 件を Pi から削除しました</p>
-        {#if result.removed.length < result.imported.length}
+        {#if !result.removeError && result.removed.length < result.imported.length}
           <p>{result.imported.length - result.removed.length} 件は取り込みを確認できなかったため Pi に残しました</p>
         {/if}
       {/if}

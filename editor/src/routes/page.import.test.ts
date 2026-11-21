@@ -153,13 +153,13 @@ describe("+page.svelte import", () => {
     );
   });
 
-  it("reports a removal failure and still reloads the capture list", async () => {
+  it("reports a removal failure with the captures removed before it and still reloads the capture list", async () => {
     importResult = async () => {
       captures = [NEW_ID, OLD_ID];
       return {
-        imported: [NEW_ID],
-        removed: [],
-        removeError: "Pi から削除できませんでした: ssh failed",
+        imported: [NEW_ID, OLD_ID],
+        removed: [NEW_ID],
+        removeError: "Pi からの削除が途中で失敗しました: ssh failed",
       };
     };
     checkbox().click();
@@ -169,9 +169,9 @@ describe("+page.svelte import", () => {
     await submitImport();
 
     expect(document.querySelector('[role="alert"]')!.textContent).toBe(
-      "Pi から削除できませんでした: ssh failed",
+      "Pi からの削除が途中で失敗しました: ssh failed",
     );
-    expect(document.body.textContent).not.toContain("Pi から削除しました");
+    expect(document.body.textContent).toContain("1 件を Pi から削除しました");
     expect(document.body.textContent).not.toContain("Pi に残しました");
     expect(listCalls()).toBeGreaterThan(before);
   });
