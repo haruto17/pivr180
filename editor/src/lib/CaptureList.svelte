@@ -3,7 +3,8 @@
   import { listCaptures } from "$lib/captures";
   import CaptureItem from "$lib/CaptureItem.svelte";
 
-  let { capturesDir }: { capturesDir?: string } = $props();
+  let { capturesDir, reloadKey }: { capturesDir?: string; reloadKey?: number } =
+    $props();
 
   let ids = $state<string[]>();
   let error = $state("");
@@ -29,6 +30,7 @@
 
   $effect(() => {
     void capturesDir;
+    void reloadKey;
     untrack(load);
   });
 </script>

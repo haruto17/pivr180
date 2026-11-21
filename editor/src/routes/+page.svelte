@@ -16,6 +16,7 @@
   let importing = $state(false);
   let imported = $state<string[]>();
   let importError = $state("");
+  let importCount = $state(0);
 
   onMount(async () => {
     try {
@@ -56,6 +57,7 @@
     try {
       hostInput = await setImportHost(hostInput);
       imported = await importCaptures();
+      importCount++;
     } catch (e) {
       importError = String(e);
     } finally {
@@ -105,5 +107,5 @@
     {/if}
   </section>
 
-  <CaptureList capturesDir={storage?.captures} />
+  <CaptureList capturesDir={storage?.captures} reloadKey={importCount} />
 </main>
