@@ -1,7 +1,7 @@
 <script lang="ts">
   import { getCaptureThumbnail, type Side } from "$lib/captures";
 
-  let { id }: { id: string } = $props();
+  let { id, oncorrect }: { id: string; oncorrect?: () => void } = $props();
 
   const sides: { side: Side; label: string }[] = [
     { side: "left", label: "左" },
@@ -51,6 +51,7 @@
       </figure>
     {/each}
   </div>
+  <button type="button" onclick={() => oncorrect?.()}>補正</button>
 </li>
 
 <style>

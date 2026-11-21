@@ -77,6 +77,37 @@ async fn capture_thumbnail(app: AppHandle, id: String, side: Side) -> Result<Str
     .map_err(|e| e.to_string())?
 }
 
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CapturePreview {
+    data_url: String,
+    width: u32,
+    height: u32,
+}
+
+#[tauri::command]
+async fn capture_preview(app: AppHandle, id: String, side: Side) -> Result<CapturePreview, String> {
+    let home = app.path().home_dir().map_err(|e| e.to_string())?;
+    let path = settings_path(&app)?;
+    let cache_dir = app.path().app_cache_dir().map_err(|e| e.to_string())?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let settings = StorageSettings::load(&path, &home).map_err(|e| e.to_string())?;
+        let preview = captures::preview(&settings.captures_dir(), &cache_dir, &id, side)
+            .map_err(|e| e.to_string())?;
+        let jpeg = std::fs::read(preview.path).map_err(|e| e.to_string())?;
+        Ok(CapturePreview {
+            data_url: format!(
+                "data:image/jpeg;base64,{}",
+                base64::engine::general_purpose::STANDARD.encode(jpeg)
+            ),
+            width: preview.width,
+            height: preview.height,
+        })
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 #[tauri::command]
 async fn get_import_host(app: AppHandle) -> Result<String, String> {
     let home = app.path().home_dir().map_err(|e| e.to_string())?;
@@ -232,6 +263,7 @@ pub fn run() {
             set_storage_settings,
             list_captures,
             capture_thumbnail,
+            capture_preview,
             get_import_host,
             set_import_host,
             get_delete_after_import,
