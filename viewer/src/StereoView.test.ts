@@ -2,6 +2,8 @@
 import { flushSync, mount, tick, unmount } from 'svelte'
 import { PerspectiveCamera, Quaternion, Texture, type Mesh, type Scene } from 'three'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import type { ControllerInput } from './controller'
+import { reactiveProps } from './reactive-props.svelte'
 import StereoView from './StereoView.svelte'
 
 const renderer = vi.hoisted(() => ({
@@ -10,16 +12,22 @@ const renderer = vi.hoisted(() => ({
   dispose: vi.fn(),
   render: vi.fn(),
   xrListeners: new Map<string, () => void>(),
+  create: vi.fn(),
+  presenting: false,
+  inputSources: [] as ControllerInput[],
 }))
+const loadTexture = vi.hoisted(() => vi.fn())
 
 vi.mock('./stereo', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./stereo')>()),
-  createRenderer: () => ({
+  createRenderer: () => (renderer.create(), {
     xr: {
-      isPresenting: false,
+      get isPresenting() {
+        return renderer.presenting
+      },
       setSession: renderer.setSession,
       setReferenceSpaceType: () => {},
-      getSession: () => null,
+      getSession: () => (renderer.presenting ? { inputSources: renderer.inputSources, end: async () => {} } : null),
       addEventListener: (type: string, listener: () => void) => renderer.xrListeners.set(type, listener),
       removeEventListener: (type: string) => renderer.xrListeners.delete(type),
     },
@@ -29,7 +37,7 @@ vi.mock('./stereo', async (importOriginal) => ({
     render: renderer.render,
     dispose: renderer.dispose,
   }),
-  loadTexture: async () => new Texture(),
+  loadTexture,
 }))
 
 const session = { end: vi.fn(async () => {}) }
@@ -59,6 +67,28 @@ function swapButton() {
   return Array.from(document.querySelectorAll('button')).find((b) => b.textContent === '左右を入れ替える')
 }
 
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>((r) => (resolve = r))
+  return { promise, resolve }
+}
+
+async function settle() {
+  await tick()
+  await tick()
+  flushSync()
+}
+
+function controller(handedness: string, { x = 0, back = false } = {}): ControllerInput {
+  const buttons = Array.from({ length: 7 }, (_, i) => ({ pressed: i === 5 && back }))
+  return { handedness, gamepad: { axes: [0, 0, x, 0], buttons } }
+}
+
+function renderFrame() {
+  const loop = renderer.setAnimationLoop.mock.calls.at(-1)![0] as () => void
+  loop()
+}
+
 function renderedScene() {
   const loop = renderer.setAnimationLoop.mock.calls.at(-1)![0] as () => void
   loop()
@@ -69,6 +99,10 @@ function renderedScene() {
 
 beforeEach(() => {
   vi.clearAllMocks()
+  renderer.presenting = false
+  renderer.inputSources = []
+  loadTexture.mockReset()
+  loadTexture.mockImplementation(async () => new Texture())
 })
 
 afterEach(() => {
@@ -206,5 +240,99 @@ describe('StereoView', () => {
 
     expect(renderer.setAnimationLoop).toHaveBeenLastCalledWith(null)
     expect(renderer.dispose).toHaveBeenCalled()
+  })
+
+  it('shows the new photo without recreating the renderer when the photo changes', async () => {
+    stubXr(true)
+    const props = reactiveProps({ src: '/first.jpg' })
+    component = mount(StereoView, { target: document.body, props })
+    await settle()
+    const next = new Texture()
+    loadTexture.mockResolvedValueOnce(next)
+
+    props.src = '/second.jpg'
+    await settle()
+
+    expect(loadTexture).toHaveBeenLastCalledWith('/second.jpg')
+    expect(renderedScene().left.material).toHaveProperty('map', next)
+    expect(renderer.create).toHaveBeenCalledTimes(1)
+    expect(renderer.dispose).not.toHaveBeenCalled()
+  })
+
+  it('shows only the last chosen photo when an earlier one finishes loading later', async () => {
+    stubXr(true)
+    const props = reactiveProps({ src: '/first.jpg' })
+    component = mount(StereoView, { target: document.body, props })
+    await settle()
+    const slow = deferred<Texture>()
+    const late = new Texture()
+    const last = new Texture()
+    loadTexture.mockReturnValueOnce(slow.promise).mockResolvedValueOnce(last)
+
+    props.src = '/second.jpg'
+    flushSync()
+    props.src = '/third.jpg'
+    await settle()
+    slow.resolve(late)
+    await settle()
+
+    expect(renderedScene().left.material).toHaveProperty('map', last)
+  })
+
+  it('keeps the eyes swapped when the photo changes', async () => {
+    stubXr(true)
+    const props = reactiveProps({ src: '/first.jpg' })
+    component = mount(StereoView, { target: document.body, props })
+    await settle()
+    swapButton()!.click()
+    flushSync()
+
+    props.src = '/second.jpg'
+    await settle()
+
+    const { left, right } = renderedScene()
+    expect(left.layers.mask).toBe(1 << 2)
+    expect(right.layers.mask).toBe(1 << 1)
+    expect(swapButton()!.getAttribute('aria-pressed')).toBe('true')
+  })
+
+  it('shows which photo could not be loaded', async () => {
+    stubXr(true)
+    loadTexture.mockRejectedValueOnce(new Error('404'))
+    await render()
+
+    expect(document.querySelector('[role="alert"]')?.textContent).toContain('/photo.jpg')
+  })
+
+  it.each([
+    ['onnext', { x: 0.9 }],
+    ['onprevious', { x: -0.9 }],
+    ['onback', { back: true }],
+  ] as const)('calls %s from the controller while in VR', async (handler, input) => {
+    stubXr(true)
+    const handlers = { onprevious: vi.fn(), onnext: vi.fn(), onback: vi.fn() }
+    component = mount(StereoView, { target: document.body, props: { src: '/photo.jpg', ...handlers } })
+    await settle()
+    renderer.presenting = true
+
+    renderer.inputSources = [controller('right', input)]
+    renderFrame()
+
+    expect(handlers[handler]).toHaveBeenCalledTimes(1)
+    for (const other of Object.keys(handlers) as (keyof typeof handlers)[]) {
+      if (other !== handler) expect(handlers[other]).not.toHaveBeenCalled()
+    }
+  })
+
+  it('ignores the controllers outside VR', async () => {
+    stubXr(true)
+    const onnext = vi.fn()
+    component = mount(StereoView, { target: document.body, props: { src: '/photo.jpg', onnext } })
+    await settle()
+
+    renderer.inputSources = [controller('right', { x: 0.9 })]
+    renderFrame()
+
+    expect(onnext).not.toHaveBeenCalled()
   })
 })
