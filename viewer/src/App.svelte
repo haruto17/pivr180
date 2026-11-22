@@ -8,6 +8,11 @@
   let selected = $state<number | null>(null)
   let error = $state('')
 
+  function step(delta: number) {
+    if (!photos || selected === null) return
+    selected = (selected + delta + photos.length) % photos.length
+  }
+
   onMount(() => {
     fetchPhotos().then(
       (list) => (photos = list),
@@ -18,9 +23,12 @@
 
 <main>
   {#if photos && selected !== null}
-    {#key photos[selected].url}
-      <StereoView src={photos[selected].url} />
-    {/key}
+    <StereoView
+      src={photos[selected].url}
+      onprevious={() => step(-1)}
+      onnext={() => step(1)}
+      onback={() => (selected = null)}
+    />
     <button type="button" class="back" onclick={() => (selected = null)}>一覧に戻る</button>
   {:else}
     <h1>pivr180 viewer</h1>
