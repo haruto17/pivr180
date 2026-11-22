@@ -67,10 +67,12 @@ export interface StereoScene {
   left: Mesh
   right: Mesh
   setSwapped(swapped: boolean): void
+  setTexture(texture: Texture): void
   dispose(): void
 }
 
-export function createStereoScene(texture: Texture, aspect = 1): StereoScene {
+export function createStereoScene(initialTexture: Texture, aspect = 1): StereoScene {
+  let texture = initialTexture
   texture.colorSpace = SRGBColorSpace
   const left = createEyeMesh('left', texture)
   const right = createEyeMesh('right', texture)
@@ -86,6 +88,12 @@ export function createStereoScene(texture: Texture, aspect = 1): StereoScene {
     setSwapped(swapped) {
       left.layers.set(EYE_LAYER[swapped ? 'right' : 'left'])
       right.layers.set(EYE_LAYER[swapped ? 'left' : 'right'])
+    },
+    setTexture(next) {
+      next.colorSpace = SRGBColorSpace
+      for (const mesh of [left, right]) (mesh.material as MeshBasicMaterial).map = next
+      texture.dispose()
+      texture = next
     },
     dispose() {
       for (const mesh of [left, right]) {

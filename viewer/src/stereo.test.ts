@@ -1,5 +1,5 @@
 import { Texture, Vector3, type BufferGeometry } from 'three'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { createHemisphereGeometry, createStereoScene, HEMISPHERE_RADIUS, type Eye } from './stereo'
 
 function vertices(geometry: BufferGeometry): Vector3[] {
@@ -115,5 +115,32 @@ describe('createStereoScene', () => {
     const { camera } = createStereoScene(new Texture())
 
     expect(camera.layers.mask).toBe(1 << 1)
+  })
+
+  it('shows a new sRGB texture to both eyes and releases the old one', () => {
+    const old = new Texture()
+    const next = new Texture()
+    const disposed = vi.fn()
+    old.addEventListener('dispose', disposed)
+    const { left, right, setTexture } = createStereoScene(old)
+
+    setTexture(next)
+
+    expect(left.material).toHaveProperty('map', next)
+    expect(right.material).toHaveProperty('map', next)
+    expect(next.colorSpace).toBe('srgb')
+    expect(disposed).toHaveBeenCalled()
+  })
+
+  it('releases the current texture on dispose after it was replaced', () => {
+    const next = new Texture()
+    const disposed = vi.fn()
+    next.addEventListener('dispose', disposed)
+    const stereo = createStereoScene(new Texture())
+    stereo.setTexture(next)
+
+    stereo.dispose()
+
+    expect(disposed).toHaveBeenCalled()
   })
 })
