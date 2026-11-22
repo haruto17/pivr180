@@ -89,13 +89,17 @@ pub async fn serve(cert_dir: &Path, addr: SocketAddr, app: Router) -> Result<Soc
     Ok(local_addr)
 }
 
-pub fn viewer_urls(hostname: Option<&str>, port: u16) -> Vec<String> {
-    let mut urls = vec![format!("https://localhost:{port}/")];
-    if let Some(label) = hostname
+pub fn local_domain(hostname: Option<&str>) -> Option<String> {
+    hostname
         .and_then(|name| name.split('.').next())
         .filter(|label| !label.is_empty() && *label != "localhost")
-    {
-        urls.push(format!("https://{label}.local:{port}/"));
+        .map(|label| format!("{label}.local"))
+}
+
+pub fn viewer_urls(hostname: Option<&str>, port: u16) -> Vec<String> {
+    let mut urls = vec![format!("https://localhost:{port}/")];
+    if let Some(domain) = local_domain(hostname) {
+        urls.push(format!("https://{domain}:{port}/"));
     }
     urls
 }
