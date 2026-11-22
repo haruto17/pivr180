@@ -2,6 +2,7 @@
 import { flushSync, mount, tick, unmount } from 'svelte'
 import { PerspectiveCamera, Quaternion, Texture, type Mesh, type Scene } from 'three'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { reactiveProps } from './reactive-props.svelte'
 import StereoView from './StereoView.svelte'
 
 const renderer = vi.hoisted(() => ({
@@ -10,11 +11,13 @@ const renderer = vi.hoisted(() => ({
   dispose: vi.fn(),
   render: vi.fn(),
   xrListeners: new Map<string, () => void>(),
+  create: vi.fn(),
 }))
+const loadTexture = vi.hoisted(() => vi.fn())
 
 vi.mock('./stereo', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./stereo')>()),
-  createRenderer: () => ({
+  createRenderer: () => (renderer.create(), {
     xr: {
       isPresenting: false,
       setSession: renderer.setSession,
@@ -29,7 +32,7 @@ vi.mock('./stereo', async (importOriginal) => ({
     render: renderer.render,
     dispose: renderer.dispose,
   }),
-  loadTexture: async () => new Texture(),
+  loadTexture,
 }))
 
 const session = { end: vi.fn(async () => {}) }
@@ -59,6 +62,18 @@ function swapButton() {
   return Array.from(document.querySelectorAll('button')).find((b) => b.textContent === '左右を入れ替える')
 }
 
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>((r) => (resolve = r))
+  return { promise, resolve }
+}
+
+async function settle() {
+  await tick()
+  await tick()
+  flushSync()
+}
+
 function renderedScene() {
   const loop = renderer.setAnimationLoop.mock.calls.at(-1)![0] as () => void
   loop()
@@ -69,6 +84,8 @@ function renderedScene() {
 
 beforeEach(() => {
   vi.clearAllMocks()
+  loadTexture.mockReset()
+  loadTexture.mockImplementation(async () => new Texture())
 })
 
 afterEach(() => {
@@ -206,5 +223,67 @@ describe('StereoView', () => {
 
     expect(renderer.setAnimationLoop).toHaveBeenLastCalledWith(null)
     expect(renderer.dispose).toHaveBeenCalled()
+  })
+
+  it('shows the new photo without recreating the renderer when the photo changes', async () => {
+    stubXr(true)
+    const props = reactiveProps({ src: '/first.jpg' })
+    component = mount(StereoView, { target: document.body, props })
+    await settle()
+    const next = new Texture()
+    loadTexture.mockResolvedValueOnce(next)
+
+    props.src = '/second.jpg'
+    await settle()
+
+    expect(loadTexture).toHaveBeenLastCalledWith('/second.jpg')
+    expect(renderedScene().left.material).toHaveProperty('map', next)
+    expect(renderer.create).toHaveBeenCalledTimes(1)
+    expect(renderer.dispose).not.toHaveBeenCalled()
+  })
+
+  it('shows only the last chosen photo when an earlier one finishes loading later', async () => {
+    stubXr(true)
+    const props = reactiveProps({ src: '/first.jpg' })
+    component = mount(StereoView, { target: document.body, props })
+    await settle()
+    const slow = deferred<Texture>()
+    const late = new Texture()
+    const last = new Texture()
+    loadTexture.mockReturnValueOnce(slow.promise).mockResolvedValueOnce(last)
+
+    props.src = '/second.jpg'
+    flushSync()
+    props.src = '/third.jpg'
+    await settle()
+    slow.resolve(late)
+    await settle()
+
+    expect(renderedScene().left.material).toHaveProperty('map', last)
+  })
+
+  it('keeps the eyes swapped when the photo changes', async () => {
+    stubXr(true)
+    const props = reactiveProps({ src: '/first.jpg' })
+    component = mount(StereoView, { target: document.body, props })
+    await settle()
+    swapButton()!.click()
+    flushSync()
+
+    props.src = '/second.jpg'
+    await settle()
+
+    const { left, right } = renderedScene()
+    expect(left.layers.mask).toBe(1 << 2)
+    expect(right.layers.mask).toBe(1 << 1)
+    expect(swapButton()!.getAttribute('aria-pressed')).toBe('true')
+  })
+
+  it('shows which photo could not be loaded', async () => {
+    stubXr(true)
+    loadTexture.mockRejectedValueOnce(new Error('404'))
+    await render()
+
+    expect(document.querySelector('[role="alert"]')?.textContent).toContain('/photo.jpg')
   })
 })

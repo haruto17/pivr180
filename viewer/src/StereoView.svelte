@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte'
-  import type { WebGLRenderer } from 'three'
+  import type { Texture, WebGLRenderer } from 'three'
   import { createRenderer, createStereoScene, loadTexture, type StereoScene } from './stereo'
 
   let { src }: { src: string } = $props()
@@ -11,6 +11,8 @@
   let swapped = $state(false)
   let xrSupported = $state<boolean | undefined>(undefined)
   let error = $state('')
+  let loadError = $state('')
+  let loadId = 0
 
   function resize() {
     if (!renderer || renderer.xr.isPresenting) return
@@ -34,8 +36,38 @@
     stereo?.setSwapped(swapped)
   }
 
+  function startRendering(r: WebGLRenderer, texture: Texture) {
+    const s = createStereoScene(texture, window.innerWidth / window.innerHeight)
+    s.setSwapped(swapped)
+    stereo = s
+    r.setAnimationLoop(() => {
+      if (!r.xr.isPresenting) {
+        s.camera.aspect = window.innerWidth / window.innerHeight
+        s.camera.updateProjectionMatrix()
+      }
+      r.render(s.scene, s.camera)
+    })
+  }
+
+  function load(url: string) {
+    const id = ++loadId
+    loadTexture(url).then(
+      (texture) => {
+        if (id !== loadId || !renderer) {
+          texture.dispose()
+          return
+        }
+        loadError = ''
+        if (stereo) stereo.setTexture(texture)
+        else startRendering(renderer, texture)
+      },
+      () => {
+        if (id === loadId) loadError = `写真を読み込めませんでした: ${url}`
+      },
+    )
+  }
+
   onMount(() => {
-    let destroyed = false
     const r = createRenderer(canvas)
     renderer = r
     // 'local-floor' would offset the eye height from the hemisphere center and break the infinite-distance look.
@@ -52,28 +84,6 @@
     }
     r.xr.addEventListener('sessionend', resetPreviewCamera)
 
-    loadTexture(src).then(
-      (texture) => {
-        if (destroyed) {
-          texture.dispose()
-          return
-        }
-        const s = createStereoScene(texture, window.innerWidth / window.innerHeight)
-        s.setSwapped(swapped)
-        stereo = s
-        r.setAnimationLoop(() => {
-          if (!r.xr.isPresenting) {
-            s.camera.aspect = window.innerWidth / window.innerHeight
-            s.camera.updateProjectionMatrix()
-          }
-          r.render(s.scene, s.camera)
-        })
-      },
-      () => {
-        error = `写真を読み込めませんでした: ${src}`
-      },
-    )
-
     if (navigator.xr) {
       navigator.xr.isSessionSupported('immersive-vr').then(
         (supported) => (xrSupported = supported),
@@ -84,16 +94,17 @@
     }
 
     return () => {
-      destroyed = true
+      renderer = undefined
       window.removeEventListener('resize', resize)
       r.xr.removeEventListener('sessionend', resetPreviewCamera)
       r.setAnimationLoop(null)
       void r.xr.getSession()?.end()
       stereo?.dispose()
       r.dispose()
-      renderer = undefined
     }
   })
+
+  $effect(() => load(src))
 </script>
 
 <canvas bind:this={canvas}></canvas>
@@ -106,6 +117,9 @@
   <button type="button" aria-pressed={swapped} onclick={toggleSwap}>左右を入れ替える</button>
   {#if error}
     <p role="alert">{error}</p>
+  {/if}
+  {#if loadError}
+    <p role="alert">{loadError}</p>
   {/if}
 </div>
 
