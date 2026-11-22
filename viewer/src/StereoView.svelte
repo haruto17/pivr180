@@ -1,9 +1,15 @@
 <script lang="ts">
   import { onMount } from 'svelte'
   import type { Texture, WebGLRenderer } from 'three'
+  import { createControllerReader, type ControllerAction } from './controller'
   import { createRenderer, createStereoScene, loadTexture, type StereoScene } from './stereo'
 
-  let { src }: { src: string } = $props()
+  let {
+    src,
+    onprevious,
+    onnext,
+    onback,
+  }: { src: string; onprevious?: () => void; onnext?: () => void; onback?: () => void } = $props()
 
   let canvas: HTMLCanvasElement
   let renderer: WebGLRenderer | undefined
@@ -36,12 +42,20 @@
     stereo?.setSwapped(swapped)
   }
 
+  function handleController(action: ControllerAction) {
+    ;({ previous: onprevious, next: onnext, back: onback })[action]?.()
+  }
+
   function startRendering(r: WebGLRenderer, texture: Texture) {
     const s = createStereoScene(texture, window.innerWidth / window.innerHeight)
     s.setSwapped(swapped)
     stereo = s
+    const readController = createControllerReader()
     r.setAnimationLoop(() => {
-      if (!r.xr.isPresenting) {
+      if (r.xr.isPresenting) {
+        const session = r.xr.getSession()
+        if (session) for (const action of readController(session.inputSources)) handleController(action)
+      } else {
         s.camera.aspect = window.innerWidth / window.innerHeight
         s.camera.updateProjectionMatrix()
       }
