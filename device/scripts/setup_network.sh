@@ -1,32 +1,30 @@
 #!/bin/sh
 set -eu
 
-passphrase=${PIVR180_AP_PASSPHRASE:-}
-if [ ${#passphrase} -lt 8 ] || [ ${#passphrase} -gt 63 ]; then
-    echo "Set PIVR180_AP_PASSPHRASE to the access point passphrase (8 to 63 characters)." >&2
-    exit 1
-fi
+cd "$(dirname "$0")/.."
 
 sudo raspi-config nonint do_hostname pivr180
 
+sudo install -m 644 networkmanager/pivr180-eth0.conf /etc/NetworkManager/conf.d/pivr180-eth0.conf
+
+# Not left to a default route for multicast: the direct connection has none, and rpi.sync joins its multicast group without naming an interface.
 set -- \
-    connection.interface-name wlan0 \
-    802-11-wireless.ssid pivr180 \
+    connection.interface-name eth0 \
     connection.autoconnect yes \
     connection.autoconnect-priority -100 \
-    802-11-wireless.mode ap \
-    802-11-wireless.band bg \
     ipv4.method shared \
-    wifi-sec.key-mgmt wpa-psk \
-    wifi-sec.proto rsn \
-    wifi-sec.pairwise ccmp \
-    wifi-sec.group ccmp \
-    wifi-sec.psk "$passphrase"
-# Not activated or reapplied here: switching wlan0 to the access point, or reapplying it, would drop the SSH session running this script.
-if nmcli connection show pivr180-ap > /dev/null 2>&1; then
-    # Not delete and add: deleting the active profile drops an SSH session over the access point before it is added back.
-    sudo nmcli connection modify pivr180-ap "$@"
+    ipv4.addresses 10.42.1.1/24 \
+    ipv4.routes 224.0.0.0/4
+# Not activated or reapplied here: switching eth0 to the direct connection, or reapplying it, would drop the SSH session running this script.
+if nmcli connection show pivr180-eth-direct > /dev/null 2>&1; then
+    # Not delete and add: deleting the active profile drops an SSH session over the direct connection before it is added back.
+    sudo nmcli connection modify pivr180-eth-direct "$@"
 else
-    sudo nmcli connection add type wifi con-name pivr180-ap "$@"
+    sudo nmcli connection add type ethernet con-name pivr180-eth-direct "$@"
 fi
-echo "Hostname is set to pivr180 and the pivr180-ap profile is saved. Reboot to apply."
+
+# Not deleted first: deleting the active access point drops an SSH session over it, which would stop this script before the rest is saved.
+if nmcli connection show pivr180-ap > /dev/null 2>&1; then
+    sudo nmcli connection delete pivr180-ap
+fi
+echo "Hostname is set to pivr180, the pivr180-eth-direct profile is saved and pivr180-ap is removed. Reboot to apply."
