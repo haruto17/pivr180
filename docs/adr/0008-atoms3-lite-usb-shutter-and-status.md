@@ -64,3 +64,4 @@ AtomS3 Lite の仕様は次のとおり（[M5Stack 公式ドキュメント](htt
 - 筐体は、AtomS3 Lite のボタンを押せて LED が見える位置に、背面の M2 ネジ穴などで固定する必要がある（[0007](./0007-blender-enclosure-fdm-printing.md)）。
 - AtomS3 Lite は Pi 5 の USB 端子から給電する。5V/5A を出せない電源では USB 端子の出力が 600mA に制限される（[0006](./0006-usb-c-pd-power-bank.md)）が、MVP で USB につなぐのは AtomS3 Lite だけなので影響は小さい見込み。実機で確認する。
 - エラーの内容は本体では表示できない。内容は Pi のログで確認する。
+- 「GPIO は使わない」と、エラーの内容を本体で表示できないことは、[0010](./0010-spi-display-for-last-capture-and-status.md) で一部見直した。撮影結果を本体で確かめるため、SPI ディスプレイ Adafruit 4313 を補助の表示としてつなぐ。シャッターボタンと状態の LED は AtomS3 Lite のまま。
