@@ -99,7 +99,8 @@ git は空のディレクトリを記録しないため、各ディレクトリ�
 
 ### ネットワーク
 
-- 登録済みの Wi-Fi が見つかればそこへ接続し、見つからなければ Pi 自身が Wi-Fi のアクセスポイントになる。自宅では Mac から取り込み、外出先ではスマホをアクセスポイントにつないで撮影する、という使い分けを想定している。
+- 自宅では、Wi-Fi または有線の LAN で自宅のネットワークにつなぎ、Mac から取り込む。
+- 外出先では、Android に USB-C の LAN アダプタを挿し、LAN ケーブルで Pi 5 の `eth0` に直結して撮影する。`eth0` で DHCP サーバーが見つからなければ、Pi は `10.42.1.1` になり、スマホに DHCP でアドレスを配る。スマホからは `http://10.42.1.1` で開く。経緯は [ADR 0010](./adr/0010-wired-direct-connection-instead-of-wifi-ap.md) を参照。
 - ホスト名は `pivr180.local`。
 
 ### 運用
@@ -196,6 +197,7 @@ git は空のディレクトリを記録しないため、各ディレクトリ�
   - Pi 5 は 5V/5A を出せると確認できない電源につながると、USB 端子の出力を 600mA に制限する。MVP で USB につなぐのは AtomS3 Lite だけなので、影響は小さい見込み。NVMe は PCIe で接続するので、この制限を受けない。実機で動作を確認する。
 - M5Stack AtomS3 Lite（シャッターボタン兼状態 LED）
 - AtomS3 Lite と Pi 5 をつなぐ短い USB ケーブル（USB Type-C ⇔ USB Type-A）
+- 外出先でスマホと直結するための USB-C の LAN アダプタと LAN ケーブル
 - 1/4" 三脚ナット
 - M2.5 ネジ類
 
@@ -251,3 +253,4 @@ git は空のディレクトリを記録しないため、各ディレクトリ�
 - [0006. 電源は USB-C PD モバイルバッテリーとする](./adr/0006-usb-c-pd-power-bank.md)
 - [0007. 筐体は Blender で設計し、Bambu Lab A1 で FDM 印刷する](./adr/0007-blender-enclosure-fdm-printing.md)
 - [0008. シャッターボタンと状態表示は USB 接続の AtomS3 Lite で行う](./adr/0008-atoms3-lite-usb-shutter-and-status.md)
+- [0010. 外出先では Pi の Wi-Fi アクセスポイントではなく、有線の直結でスマホとつなぐ](./adr/0010-wired-direct-connection-instead-of-wifi-ap.md)
