@@ -160,54 +160,82 @@ sudo systemctl disable --now pivr180-capture
 
 ## ネットワーク
 
-登録済みの Wi-Fi が見つかればそこへ接続し、見つからなければ Pi 自身がアクセスポイント（SSID `pivr180`）になる。どちらの場合も `pivr180.local` で Pi にアクセスできる。
+自宅では、Wi-Fi または有線の LAN で自宅のネットワークにつなぎ、`pivr180.local` で Pi にアクセスする。外出先では、Android に USB-C の LAN アダプタを挿し、LAN ケーブルで Pi 5 の `eth0` に直結する。直結すると Pi は `10.42.1.1` になり、Android に DHCP でアドレスを配る。Pi の Wi-Fi アクセスポイントは使わない（経緯は [ADR 0010](../docs/adr/0010-wired-direct-connection-instead-of-wifi-ap.md) を参照）。
 
-切り替えには Raspberry Pi OS（Bookworm 以降）標準の NetworkManager を使う。NetworkManager は、利用できる接続のうち自動接続の優先度（`connection.autoconnect-priority`）が最も高いものへ自動で接続する。Wi-Fi のクライアントの接続はその SSID がスキャンで見つかったときだけ利用できるが、アクセスポイントの接続は常に利用できる。そこでアクセスポイントの接続を、登録済みの Wi-Fi（既定の 0）より低い優先度（-100）で用意している。
+切り替えには Raspberry Pi OS 標準の NetworkManager を使う。`eth0` には次の 2 つの接続がある。
 
-1. 次のことを済ませておく。
-   - Wi-Fi の国（WLAN country）を設定する。Raspberry Pi Imager の OS カスタマイズで設定していればよい。未設定の場合は `sudo raspi-config` の Localisation Options → WLAN Country で設定する。
-   - 自宅などの Wi-Fi を登録する。Raspberry Pi Imager の OS カスタマイズで設定していればよい。追加する場合は次のコマンドを使う。
+| 接続 | 方式 | 自動接続の優先度 | 使う場所 |
+|---|---|---|---|
+| `netplan-eth0` | DHCP のクライアント（OS が netplan から作る） | 0（既定） | 自宅の LAN |
+| `pivr180-eth-direct` | `ipv4.method shared`（`10.42.1.1/24`、DHCP サーバー） | -100 | Android との直結 |
 
-     ```sh
-     sudo nmcli device wifi connect "<SSID>" password "<パスフレーズ>"
-     ```
-
-2. `device/` で次のスクリプトを実行する。`<パスフレーズ>` は、アクセスポイントに接続するときのパスフレーズ（8〜63 文字）に置き換える。パスフレーズはリポジトリには置かない。
+1. 自宅などの Wi-Fi を使う場合は、登録しておく。Raspberry Pi Imager の OS カスタマイズで設定していればよい。追加する場合は次のコマンドを使う。
 
    ```sh
-   PIVR180_AP_PASSPHRASE='<パスフレーズ>' ./scripts/setup_network.sh
+   sudo nmcli device wifi connect "<SSID>" password "<パスフレーズ>"
+   ```
+
+2. `device/` で次のスクリプトを実行する。
+
+   ```sh
+   ./scripts/setup_network.sh
    ```
 
    スクリプトは次のことを行う。
 
    - `raspi-config nonint do_hostname pivr180` でホスト名を `pivr180` にする。Raspberry Pi OS 標準の avahi-daemon が、`pivr180.local` の名前を mDNS で応答する。
-   - NetworkManager に、アクセスポイントの接続 `pivr180-ap` を追加する。既にある場合は、削除せずに設定を書き換える。パスフレーズを変える場合はスクリプトを再実行し、再起動すると反映される（アクセスポイントに接続して実行していても、その場では切れない）。
-     - SSID `pivr180`、WPA2（AES）、2.4GHz
-     - `ipv4.method shared`。Pi のアドレスは `10.42.0.1` になり、接続したスマホには DHCP でアドレスが配られる。
+   - `networkmanager/pivr180-eth0.conf` を `/etc/NetworkManager/conf.d/` に置き、`eth0` の DHCP のタイムアウト（`ipv4.dhcp-timeout`）の既定値を 10 秒にする（NetworkManager の既定は 45 秒）。
+   - NetworkManager に、直結用の接続 `pivr180-eth-direct` を追加する。既にある場合は、削除せずに設定を書き換える。
+     - `ipv4.method shared`、`ipv4.addresses 10.42.1.1/24`。つないだ Android には DHCP でアドレスが配られる。
+     - `ipv4.routes 224.0.0.0/4`。直結ではデフォルトルートがないため、マルチキャストのルートを持たせる。libcamera の `rpi.sync` は、左右のカメラのタイミングをマルチキャストで送り合い、参加するインターフェースをルーティングテーブルで決める。ルートがないと `ERROR RPiSync sync.cpp:96 Unable to set socket options` が出て同期が取れない。
      - 自動接続の優先度は -100
-   - 実行中の SSH が切れないよう、その場ではアクセスポイントにしない。
+   - 以前のスクリプトで作ったアクセスポイントの接続 `pivr180-ap` があれば、最後に削除する。そのアクセスポイントに SSH でつないで実行すると、削除した時点で SSH が切れる。Ethernet か自宅の Wi-Fi でつないで実行する。
+   - 実行中の SSH が切れないよう、その場では接続を切り替えない。`netplan-eth0` は書き換えない。
 
 3. `sudo reboot` で再起動する。
 
 切り替えは次のように動く。
 
-- 起動時や、接続していた Wi-Fi が切れたときに、登録済みの Wi-Fi が見つかればそこへ接続し、見つからなければアクセスポイントになる。
-- アクセスポイントになっている間は Wi-Fi をスキャンしないため、登録済みの Wi-Fi が届く場所へ戻っても自動では接続し直さない。再起動するか、次のコマンドで接続する。
+- `eth0` にケーブルをつなぐと（起動時につながっている場合も、起動後につないだ場合も）、優先度の高い `netplan-eth0` で DHCP を試す。自宅の LAN では、これまでどおり DHCP でアドレスを受け取る。
+- DHCP サーバーがいなければ、10 秒のタイムアウトで失敗する。NetworkManager の既定の再試行回数（4 回）を使い切ると `netplan-eth0` の自動接続が止まり、`pivr180-eth-direct` に切り替わる。ケーブルをつないでから、およそ 40 秒かかる。
+- ケーブルを抜き差しすると再試行の回数が戻り、再び `netplan-eth0` から試す。自宅に戻ったら、ケーブルを自宅の LAN につなぎ直すか、再起動する。
+- `netplan-eth0` を書き換えないのは、netplan から生成された接続を `nmcli connection modify` で書き換えると netplan の YAML に書き戻され、どのファイルに書かれるか（cloud-init が作る YAML に上書きされないか）がはっきりしないため。タイムアウトは NetworkManager の設定ファイルで、`eth0` の既定値として与えている。
 
-  ```sh
-  sudo nmcli connection up "<登録済みの Wi-Fi の接続名>"
-  ```
+注意点:
+
+- 自宅の LAN で、ルーターが 40 秒以上 DHCP に応答しない場合（停電の後など、Pi がルーターより先に起動した場合）、Pi は `pivr180-eth-direct` になり、自宅の LAN にアドレスを配ってしまう。ルーターが起動してから、ケーブルを抜き差しするか再起動する。
+- ケーブルを抜いてすぐ別の相手につなぎ替えると、接続が切り替わらないことがある。つなぎ替えるときは、抜いてから数秒待つ。
+
+### 外出先でのつなぎ方
+
+1. Android に USB-C の LAN アダプタを挿し、LAN ケーブルで Pi 5 の LAN 端子とつなぐ。
+2. Android のモバイルデータと Wi-Fi を切る。どちらかが有効だと、Android がそちらへ通信を流し、Pi に届かないことがある。
+3. Pi の電源を入れる（起動後にケーブルをつないでもよい）。およそ 40 秒で、Android に `10.42.1.x` のアドレスが配られる。
+4. Android のブラウザで `http://10.42.1.1` を開く。Android では `.local` の名前解決が安定しないため、`pivr180.local` ではなくアドレスで開く。
+
+### 接続の確認
 
 現在の接続は次のコマンドで確認できる。
 
 ```sh
 nmcli connection show --active
+nmcli device show eth0
 ```
 
-アクセスポイントへの切り替えをやめる場合は、接続を削除する。
+直結のときは `pivr180-eth-direct` が有効で、`eth0` のアドレスが `10.42.1.1/24` になり、`ip route` に `224.0.0.0/4 dev eth0` がある。自宅の LAN では `netplan-eth0` が有効になる。
+
+その場で切り替える場合は、次のコマンドを使う（SSH でつないでいる接続を切り替えると、SSH は切れる）。
 
 ```sh
-sudo nmcli connection delete pivr180-ap
+sudo nmcli connection up pivr180-eth-direct
+sudo nmcli connection up netplan-eth0
+```
+
+直結をやめる場合は、接続と設定ファイルを削除する。
+
+```sh
+sudo nmcli connection delete pivr180-eth-direct
+sudo rm /etc/NetworkManager/conf.d/pivr180-eth0.conf
 ```
 
 ## スマホ Web UI
@@ -215,7 +243,7 @@ sudo nmcli connection delete pivr180-ap
 撮影ソフトは、スマホから操作するための Web UI も同じプロセスで配信する。設計の経緯は [ADR 0009](../docs/adr/0009-web-ui-in-capture-process-on-port-80.md) を参照。現在はライブプレビュー、撮影設定（[撮影設定](#撮影設定)）、撮影一覧と削除（[撮影一覧と削除](#撮影一覧と削除)）、シャットダウン（[Web UI からのシャットダウン](#web-ui-からのシャットダウン)）まで。
 
 - 撮影ソフトを起動すると、カメラを開く前に Web サーバー（FastAPI + uvicorn）を別スレッドで起動する。左右の同期を待っている間も画面は開ける。終了時は、カメラとシリアルを解放した後に止める。
-- すべてのネットワークインターフェースの 80 番ポートで待ち受ける。スマホと Pi を同じネットワークにつなぎ、`http://pivr180.local` を開く。Pi が登録済みの Wi-Fi に接続している場合はスマホも同じ Wi-Fi に、アクセスポイントになっている場合はスマホを SSID `pivr180` につなぐ。ホスト名を `pivr180` にする設定は [ネットワーク](#ネットワーク) を参照。設定する前は、Pi のホスト名（`hostname` で確認できる）で `http://<ホスト名>.local` を開く。
+- すべてのネットワークインターフェースの 80 番ポートで待ち受ける。自宅では、スマホと Pi を同じネットワークにつなぎ、`http://pivr180.local` を開く。外出先では、LAN アダプタを挿した Android と Pi を LAN ケーブルで直結し、モバイルデータと Wi-Fi を切ってから `http://10.42.1.1` を開く（[外出先でのつなぎ方](#外出先でのつなぎ方)）。Android では `.local` の名前解決が安定しないため、直結のときはアドレスで開く。ホスト名を `pivr180` にする設定と直結の設定は [ネットワーク](#ネットワーク) を参照。設定する前は、Pi のホスト名（`hostname` で確認できる）で `http://<ホスト名>.local` を開く。
 - 80 番ポートは、root でないユーザーでは通常使えない。systemd のサービスでは権限を与えている（[自動起動](#自動起動)）が、`uv run pivr180-capture` で手動で起動する場合は使えないため、`--web-port 8080` などを指定して `http://<ホスト名>.local:8080` を開く。
 - 待ち受けに失敗した場合（ポートを使えない、使用中など）は、エラーをログに出し、Web UI なしで撮影を続ける。ボタンでの撮影とシャットダウンはそのまま使える。
 - 終了時、応答が終わらない接続（ライブプレビューや、ネットワークから外れたスマホなど）は 2 秒待って打ち切る。
