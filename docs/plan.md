@@ -86,6 +86,7 @@ git は空のディレクトリを記録しないため、各ディレクトリ�
 - AtomS3 Lite の RGB LED で、待機中・撮影中・エラーを知らせる。
 - AtomS3 Lite とは USB シリアルで通信する（[firmware](#firmware) を参照）。デバイスは `/dev/serial/by-id/` などの名前で固定して開く。
 - 3 秒長押しの判定は device 側で行う。AtomS3 Lite からはボタンの押下と解放だけを受け取る。
+- SPI でつないだディスプレイ Adafruit 4313 に、直前の撮影の左右の縮小画像、状態（待機中・撮影中・エラー）、エラーの内容、撮影枚数、保存先の空き容量を表示する。外出先でスマホを使わずに撮影結果を確かめるための補助の表示で、シャッターボタンと起動中・切断の表示は AtomS3 Lite が担う。ディスプレイがない、または初期化に失敗した場合も撮影は続ける。
 - MVP は写真のみなので、写真／動画の切り替えスイッチは付けない。
 
 ### スマホ Web UI
@@ -196,6 +197,8 @@ git は空のディレクトリを記録しないため、各ディレクトリ�
   - Pi 5 は 5V/5A を出せると確認できない電源につながると、USB 端子の出力を 600mA に制限する。MVP で USB につなぐのは AtomS3 Lite だけなので、影響は小さい見込み。NVMe は PCIe で接続するので、この制限を受けない。実機で動作を確認する。
 - M5Stack AtomS3 Lite（シャッターボタン兼状態 LED）
 - AtomS3 Lite と Pi 5 をつなぐ短い USB ケーブル（USB Type-C ⇔ USB Type-A）
+- Adafruit 4313（1.3 インチ 240×240 の SPI ディスプレイ、ST7789。撮影結果の確認用）
+- Adafruit 4313 と Pi 5 の GPIO ヘッダーをつなぐジャンパーワイヤー（SCLK・MOSI・CS・DC・RST・3V3・GND の 7 本）
 - 1/4" 三脚ナット
 - M2.5 ネジ類
 
@@ -217,7 +220,8 @@ git は空のディレクトリを記録しないため、各ディレクトリ�
 
 ### 配線図
 
-- AtomS3 Lite の取り付け位置と、Pi 5 との USB 接続（使う USB 端子、ケーブルの長さと取り回し）を記載する。GPIO は使わない。
+- AtomS3 Lite の取り付け位置と、Pi 5 との USB 接続（使う USB 端子、ケーブルの長さと取り回し）を記載する。
+- Adafruit 4313 の取り付け位置と、Pi 5 の GPIO ヘッダーとの配線を記載する。SPI0（SCLK: GPIO11、MOSI: GPIO10、CE0: GPIO8）、DC・RST 用の GPIO、3V3、GND を使う。
 
 ## テスト方針
 
@@ -251,3 +255,5 @@ git は空のディレクトリを記録しないため、各ディレクトリ�
 - [0006. 電源は USB-C PD モバイルバッテリーとする](./adr/0006-usb-c-pd-power-bank.md)
 - [0007. 筐体は Blender で設計し、Bambu Lab A1 で FDM 印刷する](./adr/0007-blender-enclosure-fdm-printing.md)
 - [0008. シャッターボタンと状態表示は USB 接続の AtomS3 Lite で行う](./adr/0008-atoms3-lite-usb-shutter-and-status.md)
+- [0009. スマホ Web UI は撮影ソフトと同じプロセスで 80 番ポートから配信し、画面のビルド成果物をコミットする](./adr/0009-web-ui-in-capture-process-on-port-80.md)
+- [0010. 撮影結果は SPI ディスプレイ Adafruit 4313 で本体に表示して確認する](./adr/0010-spi-display-for-last-capture-and-status.md)
