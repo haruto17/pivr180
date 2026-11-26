@@ -95,13 +95,12 @@ class ConnectionViewModel(
                     BufferedInputStream(FileInputStream(descriptor.fileDescriptor), ACCESSORY_READ_BUFFER_SIZE),
                     FileOutputStream(descriptor.fileDescriptor),
                 )
-            runSession(channel, BuildConfig.VERSION_NAME) { state ->
+            runSession(channel, BuildConfig.VERSION_NAME, close = { closeDescriptor(descriptor) }) { state ->
                 viewModelScope.launch(Dispatchers.Main) {
-                    if (openAccessory === descriptor) mutableState.value = state
+                    if (openAccessory !== descriptor) return@launch
+                    mutableState.value = state
+                    if (state is ConnectionState.Disconnected || state is ConnectionState.Failed) close()
                 }
-            }
-            launch(Dispatchers.Main) {
-                if (openAccessory === descriptor) close()
             }
         }
     }
