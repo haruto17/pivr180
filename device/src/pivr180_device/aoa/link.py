@@ -220,14 +220,14 @@ class AoaLink:
         self._tried.add(device.key)
         connection = Connection(port, device.name)
         logger.info("AOA connected to %s", device.name)
-        reset = True
         try:
             session = self._session_factory(connection)
         except Exception:
             logger.exception("could not start an AOA session on %s", device.name)
-            connection.close(reset=reset)
+            connection.close(reset=True)
             return
         self._connected.set()
+        reset = True
         try:
             reset = not self._read_until_lost(port, connection, session)
         finally:
