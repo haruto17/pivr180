@@ -272,3 +272,4 @@ git は空のディレクトリを記録しないため、各ディレクトリ�
 - [0009. スマホ Web UI は撮影ソフトと同じプロセスで 80 番ポートから配信し、画面のビルド成果物をコミットする](./adr/0009-web-ui-in-capture-process-on-port-80.md)
 - [0010. 撮影結果は SPI ディスプレイ Adafruit 4313 で本体に表示して確認する](./adr/0010-spi-display-for-last-capture-and-status.md)
 - [0011. AOA でつないだ Android アプリからカメラを操作する](./adr/0011-control-camera-from-android-app-over-aoa.md)
+- [0012. 動画撮影の方式](./adr/0012-video-capture-method.md)
