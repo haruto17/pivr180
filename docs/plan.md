@@ -19,6 +19,11 @@ Meta Quest 3 で立体視できる VR180 写真を撮る、持ち歩き可能な
 ## システム構成
 
 ```
+[android: Android スマホ]
+ プレビュー・操作・撮影結果の確認
+       ^
+       | USB（AOA）
+       v
 [device: Pi 5]  --rsync(SSH)-->  [editor: Mac / Tauri]  --HTTPS(LAN)-->  [viewer: Quest 3 Browser / WebXR]
  撮影・記録のみ                   取り込み・補正・変換・配信              ギャラリー・VR180 立体表示
        ^
@@ -32,6 +37,7 @@ Meta Quest 3 で立体視できる VR180 写真を撮る、持ち歩き可能な
 |---|---|---|
 | device | Raspberry Pi 5 | 左右の画像を撮影して保存する。変換処理は行わない |
 | firmware | AtomS3 Lite（USB で Pi 5 に接続） | シャッターボタンの押下・解放を device に送り、device から受け取った状態を RGB LED で表示する |
+| android | Android スマホ（USB で Pi 5 に接続） | 外出先で、ライブプレビュー・シャッター・撮影設定・撮影一覧と削除・シャットダウン・状態の確認を行う |
 | editor | Mac（Tauri） | Pi から撮影データを取り込み、レンズの補正と VR180 形式への変換を行う。viewer の配信も担う |
 | viewer | Quest 3 Browser（WebXR） | 変換済みの写真を一覧表示し、VR180 として立体表示する |
 
@@ -41,9 +47,10 @@ Meta Quest 3 で立体視できる VR180 写真を撮る、持ち歩き可能な
 |---|---|
 | `device/` | Pi 側のソフトウェア（Python, uv） |
 | `firmware/` | AtomS3 Lite のファームウェア（PlatformIO ＋ Arduino, C++） |
+| `android/` | Android アプリ（Kotlin ＋ Jetpack Compose, Gradle） |
 | `editor/` | Mac 側のエディタ（Tauri: Rust ＋ Svelte/TS/Vite, pnpm） |
 | `viewer/` | Quest 3 用の WebXR ビューア（Svelte/TS/Vite ＋ Three.js, pnpm） |
-| `schema/` | device と editor が共有する JSON Schema（meta.json、補正値など） |
+| `schema/` | device・editor・android が共有する JSON Schema（meta.json、補正値、AOA のプロトコルなど） |
 | `hardware/` | 筐体の bpy スクリプト、STL/3MF、BOM、配線図 |
 
 git は空のディレクトリを記録しないため、各ディレクトリの初期セットアップ時にファイルを 1 つ以上置く。
@@ -86,27 +93,34 @@ git は空のディレクトリを記録しないため、各ディレクトリ�
 - AtomS3 Lite の RGB LED で、待機中・撮影中・エラーを知らせる。
 - AtomS3 Lite とは USB シリアルで通信する（[firmware](#firmware) を参照）。デバイスは `/dev/serial/by-id/` などの名前で固定して開く。
 - 3 秒長押しの判定は device 側で行う。AtomS3 Lite からはボタンの押下と解放だけを受け取る。
-- SPI でつないだディスプレイ Adafruit 4313 に、直前の撮影の左右の縮小画像、状態（待機中・撮影中・エラー）、エラーの内容、撮影枚数、保存先の空き容量を表示する。外出先でスマホを使わずに撮影結果を確かめるための補助の表示で、シャッターボタンと起動中・切断の表示は AtomS3 Lite が担う。ディスプレイがない、または初期化に失敗した場合も撮影は続ける。
+- スマホがつながっていないときの状態表示は、AtomS3 Lite の LED だけで行う。
 - MVP は写真のみなので、写真／動画の切り替えスイッチは付けない。
 
-### スマホ Web UI
+### スマホアプリ（AOA）
 
-- FastAPI で配信し、画面は素の HTML/TS で作る。ビルドした成果物を device に同梱する。
+- Pi 5 の USB-A をホスト、Android スマホをアクセサリとし、Android Open Accessory（AOA）でつなぐ。スマホは Pi から給電される。
+- 撮影ソフトのプロセス内のスレッドで AOA を扱う。USB は pyusb で扱い、root でないユーザーでアクセスできるように udev ルールを用意する。
+- アプリからのシャッターは、AtomS3 Lite のボタンと同じく、キューで撮影のトリガーに合流させる。
 - 機能:
-  - ライブプレビュー: 左右を並べた低解像度の映像を MJPEG で配信する
+  - ライブプレビュー: 左右を並べた 640x480×2 の映像を、JPEG 品質 70、最大 5fps で送る。撮影中も止めない
+  - シャッター
   - 撮影設定: 露出補正、ホワイトバランス、コントラストを変更する
-  - 撮影一覧: 撮影データを確認し、不要なものを手動で削除する
+  - 撮影一覧: サムネイル付きで撮影データを確認し、不要なものを手動で削除する
   - シャットダウン
+  - 状態表示: 直前の撮影の左右のサムネイル、待機中・撮影中・エラーとその内容、撮影枚数、空き容量、同期の警告
+- 撮影モードの項目をプロトコルと UI に持つ。MVP では写真モードだけを受け付ける。
+- プロトコルは `schema/` に JSON Schema と例を置き、device（Python）と android（Kotlin）のテストで同じ例を読む。メッセージは長さ・種類・本文のフレームで、制御は JSON、画像は JPEG のバイナリにする。最初のハンドシェイクでプロトコルのバージョンを伝える。
+- Android アプリは Kotlin ＋ Jetpack Compose ＋ Gradle（Kotlin DSL）で作る。minSdk は 31（Android 12）。Play ストアには公開せず、サイドロードで配布する。
 
 ### ネットワーク
 
-- 登録済みの Wi-Fi が見つかればそこへ接続し、見つからなければ Pi 自身が Wi-Fi のアクセスポイントになる。自宅では Mac から取り込み、外出先ではスマホをアクセスポイントにつないで撮影する、という使い分けを想定している。
-- ホスト名は `pivr180.local`。
+- 自宅では登録済みの Wi-Fi に接続し、Mac の editor から SSH・rsync で取り込む。外出先ではネットワークを使わない。
+- ホスト名は `pivr180.local`。avahi で公開する。
 
 ### 運用
 
 - 撮影ソフトは systemd で自動起動し、撮影できる状態になったら AtomS3 Lite の LED で知らせる。
-- editor へ取り込んだ後も、Pi 側のデータは既定では消さない。削除はスマホ Web UI から手動で行うか、editor の「取り込み後に削除」オプションを使う。
+- editor へ取り込んだ後も、Pi 側のデータは既定では消さない。削除はスマホアプリから手動で行うか、editor の「取り込み後に削除」オプションを使う。
 
 ## firmware
 
@@ -194,11 +208,10 @@ git は空のディレクトリを記録しないため、各ディレクトリ�
   - Pi 5 の下側に取り付けるため、筐体内の部品配置はこれを前提にする。
   - M.2 M-key の 2230〜2280 に対応する。
 - USB-C PD モバイルバッテリー（機種は選定中。5V/5A 出力に対応したものを優先する）
-  - Pi 5 は 5V/5A を出せると確認できない電源につながると、USB 端子の出力を 600mA に制限する。MVP で USB につなぐのは AtomS3 Lite だけなので、影響は小さい見込み。NVMe は PCIe で接続するので、この制限を受けない。実機で動作を確認する。
+  - Pi 5 は 5V/5A を出せると確認できない電源につながると、USB 端子の出力を 600mA に制限する。MVP で USB につなぐのは AtomS3 Lite と、外出先でつなぐ Android スマホで、この 600mA の枠を分け合う。NVMe は PCIe で接続するので、この制限を受けない。撮影中に電圧が下がらないかを実機で確認する。
 - M5Stack AtomS3 Lite（シャッターボタン兼状態 LED）
 - AtomS3 Lite と Pi 5 をつなぐ短い USB ケーブル（USB Type-C ⇔ USB Type-A）
-- Adafruit 4313（1.3 インチ 240×240 の SPI ディスプレイ、ST7789。撮影結果の確認用）
-- Adafruit 4313 と Pi 5 の GPIO ヘッダーをつなぐジャンパーワイヤー（SCLK・MOSI・CS・DC・RST・3V3・GND の 7 本）
+- Android スマホと Pi 5 をつなぐ USB ケーブル（USB Type-C ⇔ USB Type-A）
 - 1/4" 三脚ナット
 - M2.5 ネジ類
 
@@ -220,14 +233,15 @@ git は空のディレクトリを記録しないため、各ディレクトリ�
 
 ### 配線図
 
-- AtomS3 Lite の取り付け位置と、Pi 5 との USB 接続（使う USB 端子、ケーブルの長さと取り回し）を記載する。
-- Adafruit 4313 の取り付け位置と、Pi 5 の GPIO ヘッダーとの配線を記載する。SPI0（SCLK: GPIO11、MOSI: GPIO10、CE0: GPIO8）、DC・RST 用の GPIO、3V3、GND を使う。
+- AtomS3 Lite の取り付け位置と、Pi 5 との USB 接続（使う USB 端子、ケーブルの長さと取り回し）を記載する。GPIO は使わない。
 
 ## テスト方針
 
 | 対象 | 方針 |
 |---|---|
-| device | カメラ部分と AtomS3 Lite との通信を抽象化し、Fake に差し替えて Mac 上の pytest で検証する |
+| device | カメラ部分と、AtomS3 Lite・スマホとの通信を抽象化し、Fake に差し替えて Mac 上の pytest で検証する |
+| android | JUnit の単体テストと ktlint（または detekt）。AOA のフレームの組み立てと分解、`schema/` の例の読み込みを検証する |
+| schema | pytest で、例がスキーマに合うこと、合わない例が弾かれることを検証する |
 | firmware | ハードウェアに依存しないロジック（メッセージの解釈、状態と表示の対応、ハートビートのタイムアウト）を分離し、PlatformIO の native 環境の単体テストで Mac 上で検証する |
 | editor | Rust の単体テストで、合成した魚眼画像を使って変換の精度を検証する。フロントエンドは Vitest |
 | viewer | Vitest |
@@ -257,3 +271,4 @@ git は空のディレクトリを記録しないため、各ディレクトリ�
 - [0008. シャッターボタンと状態表示は USB 接続の AtomS3 Lite で行う](./adr/0008-atoms3-lite-usb-shutter-and-status.md)
 - [0009. スマホ Web UI は撮影ソフトと同じプロセスで 80 番ポートから配信し、画面のビルド成果物をコミットする](./adr/0009-web-ui-in-capture-process-on-port-80.md)
 - [0010. 撮影結果は SPI ディスプレイ Adafruit 4313 で本体に表示して確認する](./adr/0010-spi-display-for-last-capture-and-status.md)
+- [0011. AOA でつないだ Android アプリからカメラを操作する](./adr/0011-control-camera-from-android-app-over-aoa.md)
