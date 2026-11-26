@@ -1,0 +1,9 @@
+{
+  "type": "set_settings",
+  "id": 4,
+  "settings": {
+    "exposure_value": -0.5,
+    "white_balance": "daylight",
+    "contrast": 1.2
+  }
+}

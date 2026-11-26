@@ -1,0 +1,6 @@
+{
+  "type": "hello",
+  "id": 1,
+  "protocol_version": 1,
+  "app_version": "0.1.0"
+}

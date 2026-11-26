@@ -1,0 +1,5 @@
+{
+  "type": "error",
+  "code": "invalid_message",
+  "message": "frame body is not valid JSON"
+}

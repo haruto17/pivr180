@@ -1,0 +1,21 @@
+{
+  "type": "captures",
+  "id": 7,
+  "captures": [
+    {
+      "id": "20261126-031522-000",
+      "complete": true,
+      "sync_warning": false
+    },
+    {
+      "id": "20261125-224001-001",
+      "complete": true,
+      "sync_warning": true
+    },
+    {
+      "id": "20261125-224001-000",
+      "complete": false,
+      "sync_warning": null
+    }
+  ]
+}
