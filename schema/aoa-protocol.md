@@ -60,6 +60,26 @@ AOA のバルク転送は、どちらの向きもバイト列として扱う。U
 長さ=N+4 (4 バイト)  03  00 00 00 07  JPEG (N バイト)
 ```
 
+### 例のファイル
+
+Pi と Android アプリのフレームの組み立てと分解のテストは、同じ例のファイルを読む。バイト列はすべて小文字の 16 進の文字列で書く。JPEG は本物の画像でなく、`ffd8ffd9`（SOI と EOI だけ）にする。
+
+[`examples/aoa/frames/`](./examples/aoa/frames/) には、フレーム 1 つ分を置く。
+
+| 項目 | 内容 |
+|---|---|
+| `direction` | `app_to_device` か `device_to_app` |
+| `frame` | フレーム全体 |
+| `frame_type` | 種類（整数） |
+| `body` | 本文 |
+| `message` | 種類が `0x01` のときだけ。本文を読んだ JSON オブジェクト |
+| `jpeg` | 種類が `0x02`・`0x03` のときだけ。本文の JPEG |
+| `thumbnail_id` | 種類が `0x03` のときだけ。本文の先頭の `id` |
+
+組み立てるテストは `body` から `frame` を作り、分解するテストは `frame` から `frame_type` と `body`（と種類ごとの項目）を取り出す。JSON の本文は書き方（空白やキーの順番）が実装ごとに違ってよいので、`message` から本文を作って比べない。
+
+[`examples/aoa/frame_headers/`](./examples/aoa/frame_headers/) には、長さの上限の前後の例を置く。4 MiB の本文は置かず、長さと種類の 5 バイト（`header`）と、`length`・`frame_type`・上限以内かどうか（`within_limit`）だけを書く。
+
 ## JSON のメッセージ
 
 すべてのメッセージは `type` を持つ。アプリ → Pi のメッセージは `$defs/app_message`、Pi → アプリのメッセージは `$defs/device_message` で検証する。例は [`examples/aoa/`](./examples/aoa/) に向きごとに置く。
