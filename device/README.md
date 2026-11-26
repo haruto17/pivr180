@@ -19,11 +19,11 @@ Mac には picamera2 がないため、テストは Fake（`pivr180_device.camer
 
 Picamera2 と libcamera の Python バインディングは apt の OS パッケージ（`python3-picamera2`）で入れる。pip / uv ではインストールできないため、venv は `--system-site-packages` で作成し、OS 側のパッケージを参照できるようにする。
 
-1. Picamera2 と uv をインストールする。
+1. Picamera2、libusb、uv をインストールする。libusb は Android アプリとの接続（[Android アプリとの接続（AOA）](#android-アプリとの接続aoa)）で pyusb が使う。Raspberry Pi OS には通常最初から入っている。
 
    ```sh
    sudo apt update
-   sudo apt install -y python3-picamera2
+   sudo apt install -y python3-picamera2 libusb-1.0-0
    curl -LsSf https://astral.sh/uv/install.sh | sh
    ```
 
@@ -36,7 +36,7 @@ Picamera2 と libcamera の Python バインディングは apt の OS パッケ
    スクリプトは次のことを行う。
 
    - `uv venv --clear --system-site-packages --python /usr/bin/python3` で venv を作り直す。`python3-picamera2` は OS の Python 向けにビルドされているため、uv が管理する Python ではなく `/usr/bin/python3` を使う。
-   - `uv sync --python /usr/bin/python3` で依存関係をインストールする。
+   - `uv sync --python /usr/bin/python3` で依存関係をインストールする。pyusb も venv に入る。OS に `python3-usb`（apt の pyusb）が入っていても、venv 側が優先される。
    - venv から `picamera2` と `libcamera` を import できることを確認する。
 
 `device/.python-version` は Pi の OS の Python に合わせて 3.13 を指定している。Mac の開発も同じ 3.13 で行う。
@@ -115,6 +115,44 @@ with open_camera_pair(left_index=0, right_index=1) as pair:
 - プレビュー中の露出/WB のコピーが失敗した場合は、その場でエラーをログに出し、次のシャッター（標準入力では `q` なども）で撮影せずに終了する（終了コード 1）。
 - 終了時（Ctrl+C を含む）は、プレビュー中のコピーを止めてからカメラを停止し、解放する。
 
+## Android アプリとの接続（AOA）
+
+Pi 5 の USB-A につないだ Android スマホと、Android Open Accessory（AOA）でやり取りする。方針は [ADR 0011](../docs/adr/0011-control-camera-from-android-app-over-aoa.md)、フレームとメッセージの形は [schema/aoa-protocol.md](../schema/aoa-protocol.md) を参照。
+
+- 撮影ソフトを起動すると、カメラを開く前に別スレッド（`aoa-link`）で始める。左右の同期を待っている間もつながる。
+- 1 秒ごとに USB のデバイスを調べる。
+  - Android らしいデバイスには、AOA の制御要求（51: プロトコルのバージョンを尋ねる、52: 識別文字列を送る、53: アクセサリモードを始める）を送り、アクセサリモードに切り替える。識別文字列は [schema/aoa-protocol.md](../schema/aoa-protocol.md#接続) のとおり。
+  - アクセサリモードで再列挙されたデバイス（`18d1:2d00` など）を開き、バルク転送でフレームを読み書きする。
+- Android らしいデバイスは、MTP/PTP（クラス `0x06`）かベンダー固有（`0xFF`）のインターフェースを持つものとする。ハブと、AtomS3 Lite（Espressif、`303a`）には要求を送らない。判定はカーネルが読んだディスクリプタで行うので、判定のためにデバイスへ要求を送ることはない。
+- AOA に対応していないデバイスや、要求が失敗したデバイスには、挿し直すまで要求を送り直さない。権限がない場合は、udev が権限を付けるのを待って 1 秒ごとに試し直す。
+- ケーブルが抜けたり読み書きに失敗したりしても、撮影は止めない。ログを出して接続を閉じ、挿し直すと切り替えからやり直す。
+- 長さの上限（4 MiB）を超えるフレームを受け取った場合や、書き込みに失敗した場合は、ストリームが壊れたものとして USB をリセットし、切り替えからやり直す。
+- 撮影ソフトの起動時に既にアクセサリモードのデバイス（前に起動した撮影ソフトが切り替えたもの）は、途中のストリームを読まないように、開かずにリセットして切り替えからやり直す。
+- libusb が見つからない場合は、ログを出して 1 秒ごとに試し直す。撮影はそのまま続く。
+- メッセージごとの処理はまだない（#126）。受け取ったフレームは、種類と大きさをログに出すだけ。
+
+### USB の権限
+
+root でないユーザーで動く撮影ソフトが USB のデバイスを開けるように、udev のルール `udev/70-pivr180-aoa.rules` を入れる。アクセサリモードのデバイスと、上の条件で Android らしいデバイス（AtomS3 Lite を除く）を、`plugdev` グループで読み書きできるようにする。
+
+1. `device/` で次のコマンドを実行する。
+
+   ```sh
+   sudo install -m 644 udev/70-pivr180-aoa.rules /etc/udev/rules.d/
+   sudo udevadm control --reload-rules
+   ```
+
+2. 実行するユーザーが `plugdev` グループに入っていることを確認する（Raspberry Pi OS の初期ユーザーは入っている）。
+
+   ```sh
+   groups  # plugdev が含まれるか確認する
+   sudo usermod -aG plugdev "$USER"  # 含まれない場合。再ログイン後に有効になる
+   ```
+
+3. つないだままのスマホは、挿し直すとルールが効く。
+
+`lsusb` でスマホのバス番号とデバイス番号を確かめ、`ls -l /dev/bus/usb/<バス>/<デバイス>` のグループが `plugdev`、権限が `crw-rw----` になっていれば設定できている。
+
 ## 自動起動
 
 撮影ソフトを systemd のサービス（`pivr180-capture.service`）にして、Pi の起動時にログインなしで起動する。
@@ -123,6 +161,7 @@ with open_camera_pair(left_index=0, right_index=1) as pair:
    - `./scripts/setup_pi_venv.sh` で venv を作る（[Raspberry Pi での venv の作成](#raspberry-pi-での-venv-の作成)）。
    - 保存先の `/data/captures` を作り、実行するユーザーを所有者にする（[撮影](#撮影)）。
    - 実行するユーザーを `dialout` グループに入れる（[デバイスの名前](#デバイスの名前)）。
+   - udev のルールを入れ、実行するユーザーを `plugdev` グループに入れる（[USB の権限](#usb-の権限)）。
    - polkit のルールを作る（[シャットダウンの権限](#シャットダウンの権限)）。systemd から起動した撮影ソフトは、ルールがないと長押しや Web UI からシャットダウンできない。
 
 2. `device/` で次のスクリプトを実行する。
