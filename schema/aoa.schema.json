@@ -1,0 +1,354 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/haruto17/pivr180/schema/aoa.schema.json",
+  "title": "pivr180 AOA JSON message",
+  "description": "Body of a JSON frame exchanged between device and the Android app over AOA (ADR 0011). See aoa-protocol.md for the framing.",
+  "oneOf": [
+    { "$ref": "#/$defs/app_message" },
+    { "$ref": "#/$defs/device_message" }
+  ],
+  "$defs": {
+    "app_message": {
+      "description": "Message sent from the app to device. Every app message is a request answered with the same id.",
+      "oneOf": [
+        { "$ref": "#/$defs/hello" },
+        { "$ref": "#/$defs/shutter" },
+        { "$ref": "#/$defs/get_settings" },
+        { "$ref": "#/$defs/set_settings" },
+        { "$ref": "#/$defs/get_mode" },
+        { "$ref": "#/$defs/set_mode" },
+        { "$ref": "#/$defs/list_captures" },
+        { "$ref": "#/$defs/get_thumbnail" },
+        { "$ref": "#/$defs/delete_capture" },
+        { "$ref": "#/$defs/shutdown" }
+      ]
+    },
+    "device_message": {
+      "description": "Message sent from device to the app.",
+      "oneOf": [
+        { "$ref": "#/$defs/welcome" },
+        { "$ref": "#/$defs/ok" },
+        { "$ref": "#/$defs/settings" },
+        { "$ref": "#/$defs/mode" },
+        { "$ref": "#/$defs/captures" },
+        { "$ref": "#/$defs/status" },
+        { "$ref": "#/$defs/error" }
+      ]
+    },
+    "hello": {
+      "description": "First message of a connection, telling device which protocol version the app speaks.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "id", "protocol_version", "app_version"],
+      "properties": {
+        "type": { "const": "hello" },
+        "id": { "$ref": "#/$defs/request_id" },
+        "protocol_version": { "$ref": "#/$defs/protocol_version" },
+        "app_version": {
+          "description": "Version of the Android app.",
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "shutter": {
+      "description": "Trigger a capture, like the AtomS3 Lite button.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "id"],
+      "properties": {
+        "type": { "const": "shutter" },
+        "id": { "$ref": "#/$defs/request_id" }
+      }
+    },
+    "get_settings": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "id"],
+      "properties": {
+        "type": { "const": "get_settings" },
+        "id": { "$ref": "#/$defs/request_id" }
+      }
+    },
+    "set_settings": {
+      "description": "Replace all camera settings; device answers with the settings it applied.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "id", "settings"],
+      "properties": {
+        "type": { "const": "set_settings" },
+        "id": { "$ref": "#/$defs/request_id" },
+        "settings": { "$ref": "#/$defs/camera_settings" }
+      }
+    },
+    "get_mode": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "id"],
+      "properties": {
+        "type": { "const": "get_mode" },
+        "id": { "$ref": "#/$defs/request_id" }
+      }
+    },
+    "set_mode": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "id", "mode"],
+      "properties": {
+        "type": { "const": "set_mode" },
+        "id": { "$ref": "#/$defs/request_id" },
+        "mode": { "$ref": "#/$defs/capture_mode" }
+      }
+    },
+    "list_captures": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "id"],
+      "properties": {
+        "type": { "const": "list_captures" },
+        "id": { "$ref": "#/$defs/request_id" }
+      }
+    },
+    "get_thumbnail": {
+      "description": "Request a thumbnail of one side of a capture; device answers with a thumbnail frame carrying the same id.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "id", "capture_id", "side"],
+      "properties": {
+        "type": { "const": "get_thumbnail" },
+        "id": { "$ref": "#/$defs/request_id" },
+        "capture_id": { "$ref": "#/$defs/capture_id" },
+        "side": { "enum": ["left", "right"] }
+      }
+    },
+    "delete_capture": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "id", "capture_id"],
+      "properties": {
+        "type": { "const": "delete_capture" },
+        "id": { "$ref": "#/$defs/request_id" },
+        "capture_id": { "$ref": "#/$defs/capture_id" }
+      }
+    },
+    "shutdown": {
+      "description": "Stop the capture software and shut the Pi down.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "id"],
+      "properties": {
+        "type": { "const": "shutdown" },
+        "id": { "$ref": "#/$defs/request_id" }
+      }
+    },
+    "welcome": {
+      "description": "Answer to hello, telling the app which protocol version device speaks.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "id", "protocol_version", "software_version"],
+      "properties": {
+        "type": { "const": "welcome" },
+        "id": { "$ref": "#/$defs/request_id" },
+        "protocol_version": { "$ref": "#/$defs/protocol_version" },
+        "software_version": {
+          "description": "Version of the device software.",
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "ok": {
+      "description": "Answer to shutter, delete_capture and shutdown when the request was accepted.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "id"],
+      "properties": {
+        "type": { "const": "ok" },
+        "id": { "$ref": "#/$defs/request_id" }
+      }
+    },
+    "settings": {
+      "description": "Answer to get_settings and set_settings.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "id", "settings"],
+      "properties": {
+        "type": { "const": "settings" },
+        "id": { "$ref": "#/$defs/request_id" },
+        "settings": { "$ref": "#/$defs/camera_settings" }
+      }
+    },
+    "mode": {
+      "description": "Answer to get_mode and set_mode.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "id", "mode"],
+      "properties": {
+        "type": { "const": "mode" },
+        "id": { "$ref": "#/$defs/request_id" },
+        "mode": { "$ref": "#/$defs/capture_mode" }
+      }
+    },
+    "captures": {
+      "description": "Answer to list_captures, newest first.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "id", "captures"],
+      "properties": {
+        "type": { "const": "captures" },
+        "id": { "$ref": "#/$defs/request_id" },
+        "captures": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "complete", "sync_warning"],
+            "properties": {
+              "id": { "$ref": "#/$defs/capture_id" },
+              "complete": {
+                "description": "True when meta.json, left.jpg and right.jpg are all present.",
+                "type": "boolean"
+              },
+              "sync_warning": {
+                "description": "sync.warning from meta.json, or null when it cannot be read.",
+                "type": ["boolean", "null"]
+              }
+            }
+          }
+        }
+      }
+    },
+    "status": {
+      "description": "Sent by device without a request, after welcome and whenever any field changes.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "state", "capture_count", "free_bytes", "last_capture"],
+      "properties": {
+        "type": { "const": "status" },
+        "state": { "enum": ["idle", "capturing", "error"] },
+        "error_message": {
+          "description": "What went wrong, shown to the user while state is error.",
+          "type": "string",
+          "minLength": 1
+        },
+        "capture_count": {
+          "description": "Number of captures saved on device.",
+          "type": "integer",
+          "minimum": 0
+        },
+        "free_bytes": {
+          "description": "Free space left for captures in bytes.",
+          "type": "integer",
+          "minimum": 0
+        },
+        "last_capture": {
+          "description": "The capture saved most recently since the device software started, or null before the first one or after it is deleted.",
+          "oneOf": [
+            { "type": "null" },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["id", "sync_warning"],
+              "properties": {
+                "id": { "$ref": "#/$defs/capture_id" },
+                "sync_warning": {
+                  "description": "sync.warning from the capture's meta.json.",
+                  "type": "boolean"
+                }
+              }
+            }
+          ]
+        }
+      },
+      "if": {
+        "properties": { "state": { "const": "error" } }
+      },
+      "then": {
+        "required": ["error_message"]
+      },
+      "else": {
+        "not": { "required": ["error_message"] }
+      }
+    },
+    "error": {
+      "description": "Answer to a request that failed, or a report of a frame device could not read as a request.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "code", "message"],
+      "properties": {
+        "type": { "const": "error" },
+        "id": {
+          "$ref": "#/$defs/request_id",
+          "description": "id of the failed request; absent when the frame had no readable id."
+        },
+        "code": {
+          "enum": [
+            "unsupported_protocol_version",
+            "handshake_required",
+            "invalid_message",
+            "cameras_not_ready",
+            "capture_not_found",
+            "internal_error"
+          ]
+        },
+        "message": {
+          "description": "Human-readable detail for logs.",
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "request_id": {
+      "description": "Chosen by the app and echoed by device. At most 2^31-1 so that it fits a Kotlin Int.",
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 2147483647
+    },
+    "protocol_version": {
+      "description": "Version of this protocol. Raised whenever a message or field changes.",
+      "type": "integer",
+      "minimum": 1
+    },
+    "capture_id": {
+      "description": "Name of the capture directory, YYYYMMDD-HHMMSS-NNN in UTC.",
+      "type": "string",
+      "pattern": "^[0-9]{8}-[0-9]{6}-[0-9]{3}$"
+    },
+    "capture_mode": {
+      "description": "Only photo until video is added in M10.",
+      "enum": ["photo"]
+    },
+    "camera_settings": {
+      "description": "Applied identically to both cameras.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["exposure_value", "white_balance", "contrast"],
+      "properties": {
+        "exposure_value": {
+          "description": "libcamera ExposureValue (exposure compensation) in stops.",
+          "type": "number",
+          "minimum": -2,
+          "maximum": 2
+        },
+        "white_balance": {
+          "description": "libcamera AwbMode by name.",
+          "enum": [
+            "auto",
+            "incandescent",
+            "tungsten",
+            "fluorescent",
+            "indoor",
+            "daylight",
+            "cloudy"
+          ]
+        },
+        "contrast": {
+          "description": "libcamera Contrast; 1 is normal.",
+          "type": "number",
+          "minimum": 0,
+          "maximum": 2
+        }
+      }
+    }
+  }
+}
