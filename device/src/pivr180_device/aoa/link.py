@@ -56,14 +56,9 @@ class Connection:
                 self._broken = True
                 raise
 
-    def close(self, *, reset: bool) -> None:
+    def close(self) -> None:
         with self._lock:
             self._closed = True
-            if reset:
-                try:
-                    self._port.reset()
-                except OSError as error:
-                    logger.debug("could not reset %s (%s)", self.name, error)
             try:
                 self._port.close()
             except OSError as error:
@@ -112,6 +107,7 @@ class AoaLink:
         self._thread: threading.Thread | None = None
         self._tried: set[Hashable] = set()
         self._warned: set[Hashable] = set()
+        self._needs_reset: set[Hashable] = set()
         self._connected = threading.Event()
 
     @property
@@ -165,12 +161,15 @@ class AoaLink:
             present = {device.key for device in devices}
             self._tried &= present
             self._warned &= present
+            self._needs_reset &= present
+            if first_scan:
+                self._find_stale(devices)
             for device in devices:
                 if self._stop.is_set() or device.key in self._tried:
                     continue
                 if is_accessory(device):
-                    if first_scan:
-                        self._reset_stale(device)
+                    if device.key in self._needs_reset:
+                        self._reset(device)
                     else:
                         self._serve(device)
                     # Not scanning on with this list: serving ends when the device
@@ -181,15 +180,38 @@ class AoaLink:
             first_scan = False
             self._stop.wait(self._scan_interval_s)
 
-    def _reset_stale(self, device: UsbDevice) -> None:
-        # Not opened as is: it was switched before this process started, and the
-        # app may be mid-frame on a stream this process never saw the start of.
-        logger.info("resetting %s left in accessory mode", device.name)
-        self._tried.add(device.key)
+    def _find_stale(self, devices: list[UsbDevice]) -> None:
+        for device in devices:
+            if is_accessory(device):
+                # Not opened as is: it was switched before this process started,
+                # and the app may be mid-frame on a stream this process never saw
+                # the start of.
+                logger.info("found %s left in accessory mode", device.name)
+                self._needs_reset.add(device.key)
+
+    def _reset(self, device: UsbDevice) -> None:
+        logger.info("resetting %s", device.name)
         try:
             device.reset()
         except OSError as error:
-            logger.warning("could not reset %s (%s)", device.name, error)
+            if error.errno == errno.EACCES:
+                # Not given up: udev may set the permissions only after the device
+                # shows up, so the next scan may succeed.
+                self._warn_once(device, f"no permission to reset {device.name}")
+                return
+            # Not retried: resetting every scan would keep cutting the phone off,
+            # and plugging it back in gives it a new key.
+            self._needs_reset.discard(device.key)
+            self._tried.add(device.key)
+            logger.warning(
+                "could not reset %s (%s); plug it back in to reconnect",
+                device.name,
+                error,
+            )
+            return
+        # Not waiting for a new key: a reset may restore the configuration without
+        # re-enumerating, so the same key may come back as a fresh accessory.
+        self._needs_reset.discard(device.key)
 
     def _switch(self, device: UsbDevice) -> None:
         try:
@@ -217,27 +239,31 @@ class AoaLink:
             # device shows up, so the next scan may succeed.
             self._warn_once(device, f"could not open {device.name} ({error})")
             return
-        self._tried.add(device.key)
         connection = Connection(port, device.name)
         logger.info("AOA connected to %s", device.name)
         try:
             session = self._session_factory(connection)
         except Exception:
             logger.exception("could not start an AOA session on %s", device.name)
-            connection.close(reset=True)
+            connection.close()
+            self._needs_reset.add(device.key)
+            self._reset(device)
             return
         self._connected.set()
-        reset = True
+        lost = True
         try:
-            reset = not self._read_until_lost(port, connection, session)
+            lost = not self._read_until_lost(port, connection, session)
         finally:
             self._connected.clear()
-            connection.close(reset=reset)
+            connection.close()
             try:
                 session.on_close()
             except Exception:
                 logger.exception("AOA session failed to close")
             logger.info("AOA disconnected from %s", device.name)
+        if lost:
+            self._needs_reset.add(device.key)
+            self._reset(device)
 
     def _read_until_lost(
         self, port: AccessoryPort, connection: Connection, session: Session

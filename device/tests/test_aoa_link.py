@@ -255,7 +255,8 @@ def test_a_closed_connection_refuses_to_send():
 
 def test_send_fails_after_the_link_is_closed():
     port = FakeAccessoryPort()
-    bus = FakeUsbBus([], [fake_accessory((1, 3), port)])
+    accessory = fake_accessory((1, 3), port)
+    bus = FakeUsbBus([], [accessory])
     sessions = SessionRecorder()
 
     with make_link(bus, sessions) as link:
@@ -266,27 +267,29 @@ def test_send_fails_after_the_link_is_closed():
         connection.send(SHUTTER)
     assert sessions.sessions[0].closed.is_set()
     assert port.closed
-    assert port.reset_count == 0
+    assert accessory.reset_count == 0
     assert not link.connected
 
 
 def test_resets_and_reconnects_after_a_frame_over_the_length_limit():
     port = FakeAccessoryPort([b"\x00\x40\x00\x01\x01"])
+    accessory = fake_accessory((1, 3), port)
     phone = FakeUsbDevice((1, 5))
-    bus = FakeUsbBus([], [fake_accessory((1, 3), port)], [phone])
+    bus = FakeUsbBus([], [accessory], [phone])
     sessions = SessionRecorder()
 
     with make_link(bus, sessions):
         assert wait_for(lambda: (START, 0, b"") in phone.controls)
 
-    assert port.reset_count == 1
+    assert accessory.reset_count == 1
     assert port.closed
     assert sessions.sessions[0].closed.is_set()
 
 
 def test_resets_the_connection_after_a_failed_send():
     port = FakeAccessoryPort(write_error=OSError(errno.ETIMEDOUT, "Timed out"))
-    bus = FakeUsbBus([], [fake_accessory((1, 3), port)])
+    accessory = fake_accessory((1, 3), port)
+    bus = FakeUsbBus([], [accessory])
     sessions = SessionRecorder()
 
     with make_link(bus, sessions) as link:
@@ -297,23 +300,30 @@ def test_resets_the_connection_after_a_failed_send():
 
         assert sessions.sessions[0].closed.wait(5.0)
         assert port.closed
-        assert port.reset_count == 1
+        assert wait_for(lambda: accessory.reset_count >= 1)
         with pytest.raises(ConnectionClosedError):
             connection.send(SHUTTER)
 
 
-def test_resets_an_accessory_left_from_before_start_instead_of_opening_it():
+def test_resets_an_accessory_left_from_before_start_before_opening_it():
     port = FakeAccessoryPort()
     stale = fake_accessory((1, 3), port)
-    bus = FakeUsbBus([stale], [stale])
+    opened_at_reset: list[int] = []
+    reset = stale.reset
+
+    def recording_reset() -> None:
+        opened_at_reset.append(stale.opened)
+        reset()
+
+    stale.reset = recording_reset  # type: ignore[method-assign]
+    bus = FakeUsbBus([stale])
     sessions = SessionRecorder()
 
     with make_link(bus, sessions):
-        assert wait_for(lambda: bus.finished)
+        assert wait_for(port.drained.is_set)
 
-    assert stale.reset_count == 1
-    assert stale.opened == 0
-    assert sessions.sessions == []
+    assert opened_at_reset == [0]
+    assert stale.opened == 1
 
 
 def test_keeps_scanning_while_usb_is_unavailable_and_warns_once(caplog):
@@ -345,7 +355,8 @@ def test_retries_opening_an_accessory_and_warns_once(caplog):
 
 def test_a_session_error_is_logged_and_the_next_frame_still_arrives(caplog):
     port = FakeAccessoryPort([encode_frame(HELLO), encode_frame(SHUTTER)])
-    bus = FakeUsbBus([], [fake_accessory((1, 3), port)])
+    accessory = fake_accessory((1, 3), port)
+    bus = FakeUsbBus([], [accessory])
     received: list[Frame] = []
 
     class FailingOnHello(RecordingSession):
@@ -359,7 +370,7 @@ def test_a_session_error_is_logged_and_the_next_frame_still_arrives(caplog):
         assert link.connected
 
     assert received == [HELLO, SHUTTER]
-    assert port.reset_count == 0
+    assert accessory.reset_count == 0
     assert any("failed to handle a frame" in r.message for r in caplog.records)
 
 
@@ -406,3 +417,61 @@ def test_logging_session_logs_each_frame(caplog):
         session.on_frame(Frame(FrameKind.PREVIEW, b"abc"))
 
     assert "PREVIEW frame of 3 bytes from phone" in caplog.text
+
+
+def test_retries_resetting_a_left_accessory_it_had_no_permission_for():
+    port = FakeAccessoryPort([encode_frame(HELLO)])
+    denied = OSError(errno.EACCES, "Access denied")
+    stale = fake_accessory((1, 3), port, reset_errors=[denied])
+    bus = FakeUsbBus([stale])
+    sessions = SessionRecorder()
+
+    with make_link(bus, sessions):
+        assert wait_for(port.drained.is_set)
+
+    assert stale.reset_count == 2
+    assert stale.opened == 1
+    assert sessions.sessions[0].frames == [HELLO]
+
+
+def test_opens_a_left_accessory_that_keeps_its_address_after_the_reset():
+    port = FakeAccessoryPort([encode_frame(HELLO)])
+    stale = fake_accessory((1, 3), port)
+    bus = FakeUsbBus([stale])
+    sessions = SessionRecorder()
+
+    with make_link(bus, sessions):
+        assert wait_for(port.drained.is_set)
+
+    assert stale.reset_count == 1
+    assert sessions.sessions[0].frames == [HELLO]
+
+
+def test_reopens_an_accessory_that_keeps_its_address_after_a_recovery_reset():
+    first_port = FakeAccessoryPort([b"\x00\x40\x00\x01\x01"])
+    second_port = FakeAccessoryPort([encode_frame(HELLO)])
+    accessory = fake_accessory((1, 3), first_port, second_port)
+    bus = FakeUsbBus([], [accessory])
+    sessions = SessionRecorder()
+
+    with make_link(bus, sessions):
+        assert wait_for(second_port.drained.is_set)
+
+    assert accessory.reset_count == 1
+    assert first_port.closed
+    first, second = sessions.sessions
+    assert first.closed.is_set()
+    assert second.frames == [HELLO]
+
+
+def test_gives_up_on_a_left_accessory_whose_reset_fails_otherwise(caplog):
+    port = FakeAccessoryPort()
+    broken = OSError(errno.EIO, "Input/Output Error")
+    stale = fake_accessory((1, 3), port, reset_errors=[broken, broken])
+    bus = FakeUsbBus([stale], [stale], [stale])
+
+    with caplog.at_level(logging.WARNING), make_link(bus, SessionRecorder()):
+        assert wait_for(lambda: bus.finished)
+
+    assert stale.reset_count == 1
+    assert stale.opened == 0

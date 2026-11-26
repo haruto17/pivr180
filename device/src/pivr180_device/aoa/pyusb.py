@@ -40,9 +40,6 @@ class PyUsbAccessoryPort:
             # for a short packet, so the frame would sit there until the next one.
             self._out.write(b"", timeout=WRITE_TIMEOUT_MS)
 
-    def reset(self) -> None:
-        self._device.reset()
-
     def close(self) -> None:
         usb.util.dispose_resources(self._device)
 

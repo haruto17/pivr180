@@ -256,14 +256,12 @@ def test_a_short_write_is_an_error():
         port.write(b"abc")
 
 
-def test_reset_and_close_release_the_device(usb_util_calls):
+def test_close_releases_the_device(usb_util_calls):
     stub = StubDevice()
     port = PyUsbAccessoryPort(stub, StubEndpoint(0x81), StubEndpoint(0x02))
 
-    port.reset()
     port.close()
 
-    assert stub.reset_count == 1
     assert usb_util_calls == [("dispose", stub)]
 
 
