@@ -36,6 +36,12 @@ class ConnectionViewModel(
     private val mutableState = MutableStateFlow<ConnectionState>(ConnectionState.Disconnected)
     val state: StateFlow<ConnectionState> = mutableState.asStateFlow()
 
+    private val opener =
+        AccessoryOpener<UsbAccessory, ParcelFileDescriptor>(
+            attachedAccessories = { usbManager.accessoryList?.toList().orEmpty() },
+            open = usbManager::openAccessory,
+        )
+
     private var openAccessory: ParcelFileDescriptor? = null
 
     private val detachReceiver =
@@ -64,11 +70,24 @@ class ConnectionViewModel(
 
     fun connect(accessory: UsbAccessory) {
         if (openAccessory != null) return
-        val descriptor = usbManager.openAccessory(accessory)
-        if (descriptor == null) {
-            mutableState.value = ConnectionState.Failed("cannot open the accessory")
-            return
-        }
+        val descriptor =
+            when (val result = opener.openIfAttached(accessory)) {
+                is OpenResult.Opened -> {
+                    result.handle
+                }
+
+                OpenResult.NotAttached -> {
+                    Log.i(TAG, "accessory ${accessory.model} is no longer attached; not opening it")
+                    mutableState.value = ConnectionState.Disconnected
+                    return
+                }
+
+                is OpenResult.Failed -> {
+                    Log.w(TAG, "failed to open accessory ${accessory.model}: ${result.detail}")
+                    mutableState.value = ConnectionState.Failed(result.detail)
+                    return
+                }
+            }
         openAccessory = descriptor
         viewModelScope.launch(Dispatchers.IO) {
             val channel =
