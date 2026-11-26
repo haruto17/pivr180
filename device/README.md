@@ -135,6 +135,11 @@ with open_camera_pair(left_index=0, right_index=1) as pair:
 
 サービスは次のように動く。
 
+- 起動する前に、root で次のコマンドを実行し、左右のカメラの同期のマルチキャスト（`239.255.255.250`）をループバック（`lo`）へ流すルートを用意する。`replace` なので、起動し直すたびに実行しても同じ状態になる。
+  - `ip link set lo multicast on`
+  - `ip route replace 239.255.255.250/32 dev lo`
+
+  libcamera の `rpi.sync` は、同じ Pi の中の左右のカメラの間でも、タイミングをマルチキャスト（`239.255.255.250:10000`）で送り合う。このマルチキャストのルートがないと、デフォルトルートのない状態（どのネットワークにもつながっていないときなど）で `ERROR RPiSync sync.cpp:96 Unable to set socket options` が出て同期が取れず、撮影ソフトが終了する。ルートは `lo` に張るので、どのネットワークにつながっているかに関係なく、同期のパケットは Pi の外に出ない。
 - `.venv/bin/pivr180-capture` を既定のオプション（`--shutter button`）で起動する。撮影できる状態になると、AtomS3 Lite の LED が緑の点灯になる（[状態の表示](#状態の表示)）。
 - `AmbientCapabilities=CAP_NET_BIND_SERVICE` により、root ではなく実行ユーザーのまま、スマホ Web UI を 80 番ポートで配信する（[スマホ Web UI](#スマホ-web-ui)）。
 - 異常終了した場合（起動時に左右の同期が取れない、カメラがまだ使えない、撮影後にプレビューへ戻せない、SIGKILL で終了したなど）は、5 秒後に起動し直す。起動し直している間、LED は起動中の表示になり、撮影できる状態になると緑に戻る。
@@ -146,7 +151,7 @@ with open_camera_pair(left_index=0, right_index=1) as pair:
 journalctl -u pivr180-capture -f
 ```
 
-カメラとシリアルは同時に 1 つのプロセスしか使えないため、`uv run pivr180-capture` で手動で起動する場合は、先にサービスを止める。
+カメラとシリアルは同時に 1 つのプロセスしか使えないため、`uv run pivr180-capture` で手動で起動する場合は、先にサービスを止める。サービスを止めても同期のルートは残るが、再起動した後にサービスを一度も起動していない場合は、上の 2 つのコマンドを `sudo` で実行してから起動する。
 
 ```sh
 sudo systemctl stop pivr180-capture
