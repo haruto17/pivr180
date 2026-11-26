@@ -8,6 +8,7 @@ import android.content.IntentFilter
 import android.hardware.usb.UsbAccessory
 import android.hardware.usb.UsbManager
 import android.os.ParcelFileDescriptor
+import android.util.Log
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -22,6 +23,8 @@ import java.io.BufferedInputStream
 import java.io.FileInputStream
 import java.io.FileOutputStream
 import java.io.IOException
+
+private const val TAG = "ConnectionViewModel"
 
 // f_accessory fails a bulk read whose buffer is smaller than the USB transfer, so reads go through a buffer of its size.
 private const val ACCESSORY_READ_BUFFER_SIZE = 16384
@@ -85,15 +88,21 @@ class ConnectionViewModel(
     }
 
     private fun close() {
-        try {
-            openAccessory?.close()
-        } catch (_: IOException) {
-        }
+        val descriptor = openAccessory ?: return
         openAccessory = null
+        closeDescriptor(descriptor)
     }
 
     override fun onCleared() {
         getApplication<Application>().unregisterReceiver(detachReceiver)
         close()
+    }
+}
+
+private fun closeDescriptor(descriptor: ParcelFileDescriptor) {
+    try {
+        descriptor.close()
+    } catch (e: IOException) {
+        Log.w(TAG, "failed to close the accessory file descriptor; dropping it", e)
     }
 }
