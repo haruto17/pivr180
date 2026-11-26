@@ -114,6 +114,19 @@ def test_installed_unit_may_bind_port_80_for_the_web_ui(tmp_path):
     assert "AmbientCapabilities=CAP_NET_BIND_SERVICE\n" in unit
 
 
+def test_installed_unit_routes_camera_sync_multicast_over_loopback_before_start(
+    tmp_path,
+):
+    _, _, unit = install(tmp_path)
+
+    assert "ExecStartPre=+/usr/sbin/ip link set lo multicast on\n" in unit
+    assert (
+        "ExecStartPre=+/usr/sbin/ip route replace 239.255.255.250/32 dev lo\n" in unit
+    )
+    assert "dev wlan0" not in unit
+    assert "dev eth0" not in unit
+
+
 def test_install_without_venv_fails_without_calling_sudo(tmp_path):
     project = make_project(tmp_path, with_venv=False)
 
