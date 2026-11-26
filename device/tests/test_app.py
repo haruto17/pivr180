@@ -17,6 +17,8 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from pivr180_device.aoa.fake import FakeAccessoryPort, FakeUsbBus, fake_accessory
+from pivr180_device.aoa.frame import encode_frame, json_frame
 from pivr180_device.app import (
     EXIT_ERROR,
     EXIT_INTERRUPTED,
@@ -701,6 +703,8 @@ class ServeWebRecorder:
 def main(argv: list[str] | None = None, **kwargs: Any) -> int:
     # Not the real server: binding port 80 needs privileges the tests lack.
     kwargs.setdefault("serve_web", ServeWebRecorder())
+    # Not the real bus: it would switch whatever phone is plugged into the host.
+    kwargs.setdefault("open_usb_bus", lambda: FakeUsbBus([]))
     return capture_main(argv, **kwargs)
 
 
@@ -1538,3 +1542,52 @@ def test_main_powers_off_on_a_web_request_even_when_the_capture_fails(
 
     assert code == EXIT_ERROR
     assert shutdown.calls == [(True,)]
+
+
+def aoa_link_threads() -> list[threading.Thread]:
+    return [
+        thread
+        for thread in threading.enumerate()
+        if thread.name == "aoa-link" and thread.is_alive()
+    ]
+
+
+def test_main_talks_to_the_phone_over_aoa_while_shooting_and_stops_on_exit(
+    pair: CameraPair, tmp_path: Path, caplog
+):
+    port = FakeAccessoryPort([encode_frame(json_frame({"type": "hello", "id": 1}))])
+    bus = FakeUsbBus([], [fake_accessory((1, 3), port)])
+
+    class EnterOnceTheAppHasSpoken:
+        def __iter__(self) -> Iterator[str]:
+            assert wait_for(port.drained.is_set)
+            yield "\n"
+
+    with caplog.at_level(logging.INFO):
+        code = main(
+            ["--shutter", "stdin", "--captures-dir", str(tmp_path / "captures")],
+            open_pair=OpenPairRecorder(pair),
+            stdin=EnterOnceTheAppHasSpoken(),  # type: ignore[arg-type]
+            open_usb_bus=lambda: bus,
+        )
+
+    assert code == EXIT_OK
+    assert len(list((tmp_path / "captures").iterdir())) == 1
+    assert "received a JSON frame" in caplog.text
+    assert port.closed
+    assert aoa_link_threads() == []
+
+
+def test_main_keeps_shooting_when_usb_is_unavailable(pair: CameraPair, tmp_path: Path):
+    bus = FakeUsbBus(OSError("libusb is not available"))
+
+    code = main(
+        ["--shutter", "stdin", "--captures-dir", str(tmp_path / "captures")],
+        open_pair=OpenPairRecorder(pair),
+        stdin=io.StringIO("\n"),
+        open_usb_bus=lambda: bus,
+    )
+
+    assert code == EXIT_OK
+    assert len(list((tmp_path / "captures").iterdir())) == 1
+    assert aoa_link_threads() == []
