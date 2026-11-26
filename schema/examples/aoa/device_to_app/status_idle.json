@@ -1,0 +1,10 @@
+{
+  "type": "status",
+  "state": "idle",
+  "capture_count": 3,
+  "free_bytes": 52613349376,
+  "last_capture": {
+    "id": "20261126-031522-000",
+    "sync_warning": false
+  }
+}
