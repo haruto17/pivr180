@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">pivr180</string>
+    <string name="state_disconnected">Pi とつながっていません。ケーブルを挿してください。</string>
+    <string name="state_connecting">Pi に接続しています…</string>
+    <string name="state_connected">Pi とつながりました（撮影ソフト %1$s）</string>
+    <string name="state_failed">Pi に接続できません: %1$s</string>
+</resources>
