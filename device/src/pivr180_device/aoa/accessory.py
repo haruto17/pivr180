@@ -37,6 +37,9 @@ class AccessoryIdentity:
         )
 
 
+DEFAULT_IDENTITY = AccessoryIdentity()
+
+
 def is_accessory(device: UsbDevice) -> bool:
     return (
         device.vendor_id == GOOGLE_VENDOR_ID
