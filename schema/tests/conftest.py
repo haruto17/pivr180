@@ -37,3 +37,13 @@ def correction_validator(
     correction_schema: dict[str, Any],
 ) -> Draft202012Validator:
     return Draft202012Validator(correction_schema)
+
+
+@pytest.fixture(scope="session")
+def aoa_schema() -> dict[str, Any]:
+    return load_json(SCHEMA_DIR / "aoa.schema.json")
+
+
+@pytest.fixture(scope="session")
+def aoa_validator(aoa_schema: dict[str, Any]) -> Draft202012Validator:
+    return Draft202012Validator(aoa_schema)
