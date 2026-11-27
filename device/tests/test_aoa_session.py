@@ -23,7 +23,12 @@ from pivr180_device.aoa.frame import (
     preview_frame,
 )
 from pivr180_device.aoa.link import Connection
-from pivr180_device.aoa.session import PREVIEW_INTERVAL_S, AoaServices, AoaSession
+from pivr180_device.aoa.session import (
+    PREVIEW_INTERVAL_S,
+    SHUTDOWN_OK_TIMEOUT_S,
+    AoaServices,
+    AoaSession,
+)
 from pivr180_device.button import Status
 from pivr180_device.camera import CameraPair, FrameMetadata
 from pivr180_device.camera.fake import FakeCamera, FakeFrame
@@ -174,12 +179,20 @@ class Rig:
     shutdowns: list[None] = field(default_factory=list)
     sessions: list[AoaSession] = field(default_factory=list)
 
-    def open(self, **changes: Any) -> AoaSession:
+    def open(
+        self,
+        *,
+        shutdown_ok_timeout_s: float = SHUTDOWN_OK_TIMEOUT_S,
+        **changes: Any,
+    ) -> AoaSession:
         services = self.services
         for name, value in changes.items():
             services = _replace(services, name, value)
         session = AoaSession(
-            Connection(self.port, "fake phone"), services, pacer=self.pacer
+            Connection(self.port, "fake phone"),
+            services,
+            pacer=self.pacer,
+            shutdown_ok_timeout_s=shutdown_ok_timeout_s,
         )
         self.sessions.append(session)
         return session
@@ -473,6 +486,52 @@ def test_shutdown_answers_ok_and_asks_main_to_power_off(rig: Rig):
     rig.wait_for_answer("ok", 10)
 
     assert rig.shutdowns == [None]
+
+
+def test_shutdown_is_asked_for_only_once_the_ok_is_written(rig: Rig):
+    written_by_then: list[list[dict[str, Any]]] = []
+    session = rig.open(request_shutdown=lambda: written_by_then.append(rig.messages()))
+    rig.handshake(session)
+
+    session.on_frame(json_frame(example("shutdown")))
+
+    [messages_then] = written_by_then
+    assert messages_then[-1] == {"type": "ok", "id": 10}
+
+
+def test_shutdown_goes_ahead_when_the_phone_does_not_take_the_ok_in_time(
+    rig: Rig, caplog: pytest.LogCaptureFixture
+):
+    session = rig.open(shutdown_ok_timeout_s=0)
+    rig.handshake(session)
+    rig.port.hold()
+    try:
+        with caplog.at_level(logging.WARNING):
+            session.on_frame(json_frame(example("shutdown")))
+
+        assert rig.shutdowns == [None]
+        assert {"type": "ok", "id": 10} not in rig.messages()
+        assert "could not send the shutdown ok to fake phone within 0.0 s" in (
+            caplog.text
+        )
+    finally:
+        rig.port.release()
+
+
+def test_shutdown_goes_ahead_when_the_ok_cannot_be_written(
+    rig: Rig, caplog: pytest.LogCaptureFixture
+):
+    session = rig.open()
+    rig.handshake(session)
+    rig.port.write_error = OSError("pipe error")
+
+    with caplog.at_level(logging.WARNING):
+        session.on_frame(json_frame(example("shutdown")))
+
+    assert rig.shutdowns == [None]
+    assert "could not send the shutdown ok to fake phone; shutting down" in (
+        caplog.text
+    )
 
 
 def test_status_changes_are_sent_after_the_handshake(rig: Rig):

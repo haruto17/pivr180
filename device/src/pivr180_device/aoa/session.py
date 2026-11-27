@@ -24,7 +24,7 @@ from pivr180_device.aoa.messages import (
     error_message,
     parse_request,
 )
-from pivr180_device.aoa.sender import FrameSender
+from pivr180_device.aoa.sender import Delivery, FrameSender
 from pivr180_device.camera_settings import CameraSettingsControl, CamerasNotReadyError
 from pivr180_device.captures_api import capture_thumbnail, summarize_captures
 from pivr180_device.preview import MAX_FPS
@@ -35,6 +35,9 @@ from pivr180_device.storage import CaptureNotFoundError, CaptureStorage
 logger = logging.getLogger(__name__)
 
 PREVIEW_INTERVAL_S = 1 / MAX_FPS
+# Not shorter: a frame already being written may hold the ok back for one USB
+# write timeout, and the ok's own write may take another.
+SHUTDOWN_OK_TIMEOUT_S = 5.0
 
 
 class Pacer(Protocol):
@@ -199,9 +202,11 @@ class AoaSession:
         services: AoaServices,
         *,
         pacer: Pacer | None = None,
+        shutdown_ok_timeout_s: float = SHUTDOWN_OK_TIMEOUT_S,
     ) -> None:
         self._name = connection.name
         self._services = services
+        self._shutdown_ok_timeout_s = shutdown_ok_timeout_s
         self._phase = Phase.AWAITING_HELLO
         self._unsubscribe: Callable[[], None] | None = None
         self._sender = FrameSender(connection)
@@ -294,11 +299,7 @@ class AoaSession:
             case "get_mode" | "set_mode":
                 self._send({"type": "mode", "id": request.id, "mode": PHOTO_MODE})
             case "shutdown":
-                self._ok(request)
-                logger.info("%s asked to shut down", self._name)
-                # Not powering off here: main does it once the capture under way
-                # has ended and the cameras and the button are released.
-                self._services.request_shutdown()
+                self._shutdown(request)
             case "stop_preview":
                 self._preview.pause()
                 self._ok(request)
@@ -326,6 +327,25 @@ class AoaSession:
             return
         self._services.shutter()
         self._ok(request)
+
+    def _shutdown(self, request: Request) -> None:
+        logger.info("%s asked to shut down", self._name)
+        delivery = self._ok(request)
+        # Not asking main right away: the teardown closes the connection and
+        # drops the frames not yet written, so the app would never get the ok.
+        if not delivery.wait(self._shutdown_ok_timeout_s):
+            logger.warning(
+                "could not send the shutdown ok to %s within %.1f s; shutting down",
+                self._name,
+                self._shutdown_ok_timeout_s,
+            )
+        elif not delivery.sent:
+            logger.warning(
+                "could not send the shutdown ok to %s; shutting down", self._name
+            )
+        # Not powering off here: main does it once the capture under way has
+        # ended and the cameras and the button are released.
+        self._services.request_shutdown()
 
     def _send_settings(self, request: Request) -> None:
         settings = self._services.settings.current
@@ -396,8 +416,8 @@ class AoaSession:
     def _send_status(self, status: StatusMessage) -> None:
         self._send(status)
 
-    def _ok(self, request: Request) -> None:
-        self._send({"type": "ok", "id": request.id})
+    def _ok(self, request: Request) -> Delivery:
+        return self._send({"type": "ok", "id": request.id})
 
     def _error(self, request: Request, code: ErrorCode, message: str) -> None:
         self._send(error_message(code, message, request.id))
@@ -408,5 +428,5 @@ class AoaSession:
             return
         self._send(error_message(ErrorCode.INVALID_MESSAGE, message, request_id))
 
-    def _send(self, message: dict[str, Any]) -> None:
-        self._sender.send(json_frame(message))
+    def _send(self, message: dict[str, Any]) -> Delivery:
+        return self._sender.send(json_frame(message))
