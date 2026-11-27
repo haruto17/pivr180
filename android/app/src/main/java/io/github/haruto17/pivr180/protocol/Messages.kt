@@ -4,7 +4,7 @@ import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 
-const val PROTOCOL_VERSION = 1
+const val PROTOCOL_VERSION = 2
 
 val protocolJson = Json
 
@@ -77,6 +77,18 @@ data class DeleteCapture(
 @Serializable
 @SerialName("shutdown")
 data class Shutdown(
+    override val id: Int,
+) : AppMessage
+
+@Serializable
+@SerialName("stop_preview")
+data class StopPreview(
+    override val id: Int,
+) : AppMessage
+
+@Serializable
+@SerialName("start_preview")
+data class StartPreview(
     override val id: Int,
 ) : AppMessage
 
