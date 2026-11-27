@@ -20,6 +20,16 @@ THUMBNAIL_QUALITY = 80
 # them on every visit would decode the full-size JPEGs again.
 THUMBNAIL_CACHE_CONTROL = "private, max-age=86400"
 IMAGE_FILENAMES = {"left": LEFT_FILENAME, "right": RIGHT_FILENAME}
+Side = Literal["left", "right"]
+
+
+def summarize_captures(storage: CaptureStorage) -> list[dict[str, Any]]:
+    return [_summarize(directory) for directory in storage.list_captures()]
+
+
+def capture_thumbnail(storage: CaptureStorage, capture_id: str, side: Side) -> bytes:
+    directory = storage.find_capture(capture_id)
+    return _shrink(directory / IMAGE_FILENAMES[side])
 
 
 def captures_router(storage: CaptureStorage) -> APIRouter:
@@ -27,13 +37,12 @@ def captures_router(storage: CaptureStorage) -> APIRouter:
 
     @router.get("")
     def list_captures() -> list[dict[str, Any]]:
-        return [_summarize(directory) for directory in storage.list_captures()]
+        return summarize_captures(storage)
 
     @router.get("/{capture_id}/thumbnails/{side}")
-    def thumbnail(capture_id: str, side: Literal["left", "right"]) -> Response:
+    def thumbnail(capture_id: str, side: Side) -> Response:
         try:
-            directory = storage.find_capture(capture_id)
-            image = _shrink(directory / IMAGE_FILENAMES[side])
+            image = capture_thumbnail(storage, capture_id, side)
         except (CaptureNotFoundError, OSError) as error:
             raise HTTPException(status_code=404) from error
         return Response(
