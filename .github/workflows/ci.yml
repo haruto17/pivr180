@@ -29,6 +29,20 @@ jobs:
       - run: uv run ruff check
       - run: uv run ruff format --check
 
+  android:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: android
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: 21
+      - uses: gradle/actions/setup-gradle@v6
+      - run: ./gradlew assembleDebug testDebugUnitTest ktlintCheck
+
   device-web:
     runs-on: ubuntu-latest
     defaults:
