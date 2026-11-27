@@ -4,6 +4,19 @@ Pi（device）と Android アプリが AOA でやり取りするメッセージ�
 
 プロトコルのバージョンは **1**。
 
+## 接続
+
+Pi は USB のホストとして、AOA の制御要求 52 で次の識別文字列を送ってから、53 でスマホをアクセサリモードに切り替える。Android アプリは、`accessory_filter.xml` の `manufacturer` と `model` をこの値に合わせる。
+
+| 番号 | 項目 | 値 |
+|---|---|---|
+| 0 | 製造元（manufacturer） | `pivr180` |
+| 1 | モデル（model） | `pivr180` |
+| 2 | 説明（description） | `pivr180 stereo camera` |
+| 3 | バージョン（version） | プロトコルのバージョン（`1`） |
+| 4 | URI | `https://github.com/haruto17/pivr180` |
+| 5 | シリアル番号（serial） | 空 |
+
 ## フレーム
 
 AOA のバルク転送は、どちらの向きもバイト列として扱う。USB のパケットの区切りとフレームの区切りは一致しないので、受け取る側はフレームの長さを見て区切る。

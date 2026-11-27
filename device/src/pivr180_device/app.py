@@ -9,6 +9,9 @@ from typing import TextIO
 
 from fastapi import FastAPI
 
+from pivr180_device.aoa.base import UsbBus
+from pivr180_device.aoa.link import AoaLink, LoggingSession
+from pivr180_device.aoa.pyusb import PyUsbBus
 from pivr180_device.atoms3.base import SerialLink
 from pivr180_device.atoms3.pyserial import DEFAULT_PORT, open_serial_link
 from pivr180_device.button import ButtonShutter, Status
@@ -175,6 +178,7 @@ def main(
     clock: Callable[[], float] = time.monotonic,
     sleep: Callable[[float], None] = time.sleep,
     serve_web: ServeWeb = serve,
+    open_usb_bus: Callable[[], UsbBus] = PyUsbBus,
 ) -> int:
     args = _parse_args(argv)
     logging.basicConfig(
@@ -201,6 +205,7 @@ def main(
                 # Not exiting: shooting with the button must keep working
                 # without the phone, e.g. when port 80 cannot be bound.
                 logger.exception("web UI is unavailable; shooting continues")
+            stack.enter_context(AoaLink(open_usb_bus(), LoggingSession))
             triggers: Iterable[object]
             show: ShowStatus = _ignore_status
             if args.shutter == SHUTTER_BUTTON:

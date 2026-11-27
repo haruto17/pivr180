@@ -1,0 +1,5 @@
+# Not TAG+="uaccess": it grants access only to the user logged in at the seat, not to the capture service.
+SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_device", ATTR{idVendor}=="18d1", ATTR{idProduct}=="2d0[0145]", MODE="0660", GROUP="plugdev"
+# Not every vendor-specific device: the AtomS3 Lite (Espressif, 303a) has a vendor-specific JTAG interface.
+SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_device", ATTR{idVendor}!="303a", ENV{ID_USB_INTERFACES}=="*:06????:*", MODE="0660", GROUP="plugdev"
+SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_device", ATTR{idVendor}!="303a", ENV{ID_USB_INTERFACES}=="*:ff????:*", MODE="0660", GROUP="plugdev"
