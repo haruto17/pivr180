@@ -15,6 +15,7 @@ from pivr180_device.aoa.fake import (
     FakeAccessoryPort,
     FakeUsbBus,
     FakeUsbDevice,
+    GatedAccessoryPort,
     fake_accessory,
 )
 from pivr180_device.aoa.frame import (
@@ -267,6 +268,70 @@ def test_send_fails_after_the_link_is_closed():
     assert port.closed
     assert accessory.reset_count == 0
     assert not link.connected
+
+
+class BlockedSend:
+    def __init__(self, connection: Connection) -> None:
+        self.errors: list[OSError] = []
+        self._thread = threading.Thread(
+            target=self._send, args=(connection,), daemon=True
+        )
+        self._thread.start()
+
+    def _send(self, connection: Connection) -> None:
+        try:
+            connection.send(SHUTTER)
+        except OSError as error:
+            self.errors.append(error)
+
+    def join(self) -> None:
+        self._thread.join(5.0)
+        assert not self._thread.is_alive()
+
+
+def in_another_thread(call: Callable[[], object]) -> list[object]:
+    results: list[object] = []
+    thread = threading.Thread(target=lambda: results.append(call()), daemon=True)
+    thread.start()
+    thread.join(5.0)
+    return results
+
+
+def test_the_state_can_be_read_while_a_send_is_blocked_on_the_phone():
+    port = GatedAccessoryPort()
+    connection = Connection(port, "fake phone")
+    port.hold()
+    send = BlockedSend(connection)
+    assert port.wait_for_writes_started(1)
+
+    states = in_another_thread(lambda: (connection.broken, connection.closed))
+
+    assert states == [(False, False)]
+    port.release()
+    send.join()
+    assert port.written == [encode_frame(SHUTTER)]
+    assert send.errors == []
+
+
+def test_closing_while_a_send_is_blocked_marks_the_connection_broken_once_it_fails():
+    port = GatedAccessoryPort()
+    connection = Connection(port, "fake phone")
+    port.hold()
+    send = BlockedSend(connection)
+    assert port.wait_for_writes_started(1)
+
+    assert in_another_thread(connection.close) == [None]
+
+    assert connection.closed
+    assert port.closed
+    assert not connection.broken
+    port.write_error = OSError(errno.ENODEV, "No such device")
+    port.release()
+    send.join()
+    assert send.errors == [port.write_error]
+    assert connection.broken
+    with pytest.raises(ConnectionClosedError):
+        connection.send(SHUTTER)
 
 
 def test_resets_and_reconnects_after_a_frame_over_the_length_limit():
