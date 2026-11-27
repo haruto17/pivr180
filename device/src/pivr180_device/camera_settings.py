@@ -52,23 +52,41 @@ DEFAULT_SETTINGS = CameraSettings(
 )
 
 
-def settings_router(slot: CameraSlot) -> APIRouter:
+class CamerasNotReadyError(RuntimeError):
+    pass
+
+
+class CameraSettingsControl:
+    def __init__(self, slot: CameraSlot) -> None:
+        self._slot = slot
+        self._applying = threading.Lock()
+        self._current = DEFAULT_SETTINGS
+
+    @property
+    def current(self) -> CameraSettings:
+        return self._current
+
+    def apply(self, settings: CameraSettings) -> CameraSettings:
+        with self._applying, self._slot.borrow() as cameras:
+            if cameras is None:
+                raise CamerasNotReadyError("cameras are not ready")
+            cameras.exposure.apply_controls(settings.to_controls())
+            self._current = settings
+        return settings
+
+
+def settings_router(control: CameraSettingsControl) -> APIRouter:
     router = APIRouter()
-    applying = threading.Lock()
-    current = DEFAULT_SETTINGS
 
     @router.get(SETTINGS_PATH)
     def get_settings() -> CameraSettings:
-        return current
+        return control.current
 
     @router.put(SETTINGS_PATH)
     def put_settings(settings: CameraSettings) -> CameraSettings:
-        nonlocal current
-        with applying, slot.borrow() as cameras:
-            if cameras is None:
-                raise HTTPException(status_code=503, detail="cameras are not ready")
-            cameras.exposure.apply_controls(settings.to_controls())
-            current = settings
-        return settings
+        try:
+            return control.apply(settings)
+        except CamerasNotReadyError as error:
+            raise HTTPException(status_code=503, detail=str(error)) from error
 
     return router

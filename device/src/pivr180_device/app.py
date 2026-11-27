@@ -17,7 +17,7 @@ from pivr180_device.atoms3.pyserial import DEFAULT_PORT, open_serial_link
 from pivr180_device.button import ButtonShutter, Status
 from pivr180_device.camera.base import CameraPair
 from pivr180_device.camera.picamera2 import open_camera_pair
-from pivr180_device.camera_settings import settings_router
+from pivr180_device.camera_settings import CameraSettingsControl, settings_router
 from pivr180_device.captures_api import captures_router
 from pivr180_device.exposure import ExposurePreview, ExposureSettings, ExposureSync
 from pivr180_device.power import power_off
@@ -186,6 +186,7 @@ def main(
     )
     storage = CaptureStorage(args.captures_dir)
     slot = CameraSlot()
+    camera_settings = CameraSettingsControl(slot)
     shutter: ButtonShutter | None = None
     shutdown_request = ShutdownRequest()
     code = EXIT_OK
@@ -195,7 +196,7 @@ def main(
                 app = create_app(
                     [
                         preview_router(slot),
-                        settings_router(slot),
+                        settings_router(camera_settings),
                         shutdown_router(shutdown_request.request),
                         captures_router(storage),
                     ]
