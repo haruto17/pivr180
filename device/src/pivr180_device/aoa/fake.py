@@ -148,3 +148,46 @@ class FakeUsbBus:
         if isinstance(scan, OSError):
             raise scan
         return list(scan)
+
+
+class GatedAccessoryPort:
+    def __init__(self) -> None:
+        self._state = threading.Condition()
+        self._open = True
+        self.write_error: OSError | None = None
+        self.writes_started = 0
+        self.written: list[bytes] = []
+        self.closed = False
+
+    def read(self) -> bytes:
+        return b""
+
+    def write(self, data: bytes) -> None:
+        with self._state:
+            self.writes_started += 1
+            self._state.notify_all()
+            self._state.wait_for(lambda: self._open)
+            if self.write_error is not None:
+                raise self.write_error
+            self.written.append(data)
+            self._state.notify_all()
+
+    def close(self) -> None:
+        self.closed = True
+
+    def hold(self) -> None:
+        with self._state:
+            self._open = False
+
+    def release(self) -> None:
+        with self._state:
+            self._open = True
+            self._state.notify_all()
+
+    def wait_for_writes_started(self, count: int, timeout_s: float = 5.0) -> bool:
+        with self._state:
+            return self._state.wait_for(lambda: self.writes_started >= count, timeout_s)
+
+    def wait_for_written(self, count: int, timeout_s: float = 5.0) -> bool:
+        with self._state:
+            return self._state.wait_for(lambda: len(self.written) >= count, timeout_s)
