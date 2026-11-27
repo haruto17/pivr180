@@ -37,6 +37,7 @@ from pivr180_device.exposure import ExposureSync
 from pivr180_device.preview import PREVIEW_PATH
 from pivr180_device.shutdown import SHUTDOWN_HEADER, SHUTDOWN_HEADER_VALUE
 from pivr180_device.slot import CameraSlot
+from pivr180_device.status import StatusBoard
 from pivr180_device.storage import CaptureStorage
 from pivr180_device.web import serve
 
@@ -665,6 +666,74 @@ def test_keeps_the_error_when_the_preview_sync_dies_after_a_shot(
 
     assert shown_after_shot == [Status.ERROR]
     assert len(captures(storage)) == 1
+
+
+def status_board(storage: CaptureStorage) -> tuple[StatusBoard, list[dict[str, Any]]]:
+    board = StatusBoard(storage, measure_free_bytes=lambda path: 1)
+    received: list[dict[str, Any]] = []
+    board.subscribe(received.append)
+    del received[0]
+    return board, received
+
+
+def test_passes_each_shot_on_to_the_status_board(
+    pair: CameraPair, storage: CaptureStorage
+):
+    board, received = status_board(storage)
+
+    run(pair, storage, [None], board=board)
+
+    last = {"id": "20261107-123456-000", "sync_warning": False}
+    assert [
+        (message["state"], message["capture_count"], message["last_capture"])
+        for message in received
+    ] == [("capturing", 0, None), ("capturing", 1, last), ("idle", 1, last)]
+
+
+def test_passes_a_failed_capture_on_with_its_reason(
+    pair: CameraPair, left: AutoCamera, storage: CaptureStorage
+):
+    left.failing_captures = 1
+    board, received = status_board(storage)
+
+    run(pair, storage, [None, None], board=board)
+
+    assert [message["state"] for message in received] == [
+        "capturing",
+        "error",
+        "capturing",
+        "capturing",
+        "idle",
+    ]
+    assert received[1]["error_message"] == (
+        "capture failed: camera left dropped a frame"
+    )
+    assert "error_message" not in received[-1]
+
+
+def test_passes_a_dead_preview_on_with_its_reason(
+    pair: CameraPair, left: AutoCamera, storage: CaptureStorage
+):
+    board, received = status_board(storage)
+
+    def triggers() -> Iterator[None]:
+        left.broken.set()
+        assert wait_for(lambda: not preview_threads())
+        yield
+
+    with pytest.raises(RuntimeError, match="exposure preview stopped on error"):
+        run(pair, storage, triggers(), board=board)
+
+    assert received == [
+        {
+            "type": "status",
+            "state": "error",
+            "error_message": "camera preview stopped: camera left disconnected",
+            "capture_count": 0,
+            "free_bytes": 1,
+            "last_capture": None,
+        }
+    ]
 
 
 @pytest.mark.parametrize(

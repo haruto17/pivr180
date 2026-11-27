@@ -24,6 +24,7 @@ from pivr180_device.power import power_off
 from pivr180_device.preview import preview_router
 from pivr180_device.shutdown import ShutdownRequest, shutdown_router
 from pivr180_device.slot import CameraSlot, LiveCameras
+from pivr180_device.status import StatusBoard
 from pivr180_device.storage import DEFAULT_CAPTURE_ROOT, CaptureStorage
 from pivr180_device.sync import SyncedPair, capture_synced_pair
 from pivr180_device.web import create_app, serve
@@ -72,9 +73,19 @@ def run(
     triggers: Iterable[object],
     show: ShowStatus = _ignore_status,
     slot: CameraSlot | None = None,
+    board: StatusBoard | None = None,
 ) -> None:
     if slot is None:
         slot = CameraSlot()
+
+    def report(status: Status, error_message: str | None = None) -> None:
+        show(status)
+        if board is not None:
+            board.show(status, error_message)
+
+    def preview_failed() -> None:
+        report(Status.ERROR, f"camera preview stopped: {_describe(preview.error)}")
+
     pair.start()
     try:
         # Not left to the first preview frame or shot: waiting for SyncReady on
@@ -83,37 +94,37 @@ def run(
         pair.left.capture_metadata()
         pair.right.capture_metadata()
         exposure = ExposureSync(pair)
-        with (
-            ExposurePreview(exposure, on_error=lambda: show(Status.ERROR)) as preview,
-            slot.attach(LiveCameras(pair=pair, exposure=exposure)),
-        ):
+        preview = ExposurePreview(exposure, on_error=preview_failed)
+        with preview, slot.attach(LiveCameras(pair=pair, exposure=exposure)):
             logger.info("ready to shoot")
-            show(Status.IDLE)
+            report(Status.IDLE)
             # Not trusting idle alone: the preview may have died before it was
             # shown, and its error is recorded before on_error shows it.
             if preview.error is not None:
-                show(Status.ERROR)
+                preview_failed()
             for _ in triggers:
                 # Not shooting on: the preview thread dies only on a camera error,
                 # and leaving the block makes stop() raise it instead of hiding it.
                 if not preview.running:
                     break
-                show(Status.CAPTURING)
+                report(Status.CAPTURING)
                 try:
                     directory, synced = shoot(pair, exposure, storage)
-                except Exception:
+                except Exception as error:
                     # Not continuing while still locked: a failed resume leaves
                     # sync_once a no-op, so left AE/AWB and the copy would not run.
                     if exposure.locked_settings is not None:
                         raise
                     logger.exception("capture failed; back to preview")
-                    show(Status.ERROR)
+                    report(Status.ERROR, f"capture failed: {_describe(error)}")
                     continue
-                show(Status.IDLE)
+                if board is not None:
+                    board.saved(directory.name, synced.warning)
+                report(Status.IDLE)
                 # Not trusting idle alone: the preview may have died during the
                 # shot, and its error is recorded before on_error shows it.
                 if preview.error is not None:
-                    show(Status.ERROR)
+                    preview_failed()
                 if synced.warning:
                     logger.warning(
                         "saved %s with sync warning: timestamp diff %d ns "
@@ -126,6 +137,12 @@ def run(
                     logger.info("saved %s", directory)
     finally:
         pair.stop()
+
+
+def _describe(error: BaseException | None) -> str:
+    if error is None:
+        return "unknown error"
+    return str(error) or type(error).__name__
 
 
 def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
