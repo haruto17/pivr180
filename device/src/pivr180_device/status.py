@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from pivr180_device.button import Status
-from pivr180_device.storage import CaptureStorage
+from pivr180_device.storage import CaptureNotFoundError, CaptureStorage
 
 logger = logging.getLogger(__name__)
 
@@ -60,7 +60,14 @@ class StatusBoard:
 
     def saved(self, capture_id: str, sync_warning: bool) -> None:
         with self._lock:
-            self._last_capture = LastCapture(capture_id, sync_warning)
+            # Not taken on trust: the capture loop reports a save only after
+            # resuming the preview, and the app may have deleted it meanwhile.
+            try:
+                self._storage.find_capture(capture_id)
+            except CaptureNotFoundError:
+                logger.info("%s was deleted before its save was reported", capture_id)
+            else:
+                self._last_capture = LastCapture(capture_id, sync_warning)
             self._measure()
             self._publish()
 

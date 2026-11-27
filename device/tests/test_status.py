@@ -216,3 +216,18 @@ def test_free_bytes_are_measured_on_the_nearest_existing_directory(
 
     assert free_bytes(tmp_path / "captures" / "not" / "yet") == 6
     assert measured == [tmp_path]
+
+
+def test_a_save_reported_after_its_capture_was_deleted_stays_deleted(
+    root: Path, board: StatusBoard
+):
+    make_capture(root, "20261126-031522-000")
+    _, received = listen(board)
+
+    (root / "20261126-031522-000").rmdir()
+    board.deleted("20261126-031522-000")
+    board.saved("20261126-031522-000", sync_warning=False)
+    board.show(Status.IDLE)
+
+    assert received[-1]["capture_count"] == 0
+    assert received[-1]["last_capture"] is None
