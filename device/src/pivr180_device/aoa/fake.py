@@ -1,7 +1,7 @@
 import threading
 import time
 from collections import deque
-from collections.abc import Hashable, Iterable, Sequence
+from collections.abc import Callable, Hashable, Iterable, Sequence
 
 from pivr180_device.aoa.accessory import (
     GET_PROTOCOL,
@@ -189,5 +189,10 @@ class GatedAccessoryPort:
             return self._state.wait_for(lambda: self.writes_started >= count, timeout_s)
 
     def wait_for_written(self, count: int, timeout_s: float = 5.0) -> bool:
+        return self.wait_until(lambda written: len(written) >= count, timeout_s)
+
+    def wait_until(
+        self, predicate: Callable[[list[bytes]], bool], timeout_s: float = 5.0
+    ) -> bool:
         with self._state:
-            return self._state.wait_for(lambda: len(self.written) >= count, timeout_s)
+            return self._state.wait_for(lambda: predicate(self.written), timeout_s)
