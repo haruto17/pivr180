@@ -19,27 +19,38 @@ val HANDSHAKE_TIMEOUT: Duration = 5.seconds
 
 private enum class Phase { HANDSHAKING, CONNECTED, ENDED }
 
+fun interface DeadlineScheduler {
+    fun schedule(
+        delay: Duration,
+        action: () -> Unit,
+    ): () -> Unit
+}
+
+val executorDeadlineScheduler =
+    DeadlineScheduler { delay, action ->
+        val executor = Executors.newSingleThreadScheduledExecutor()
+        executor.schedule(action, delay.inWholeMilliseconds, TimeUnit.MILLISECONDS)
+        executor::shutdownNow
+    }
+
 fun runSession(
     channel: AccessoryChannel,
     appVersion: String,
     close: () -> Unit,
+    deadlines: DeadlineScheduler = executorDeadlineScheduler,
     handshakeTimeout: Duration = HANDSHAKE_TIMEOUT,
     onState: (ConnectionState) -> Unit,
 ) {
     onState(ConnectionState.Connecting)
     val phase = AtomicReference(Phase.HANDSHAKING)
-    val timer = Executors.newSingleThreadScheduledExecutor()
     // Cancelling the reading coroutine would not unblock the stream read; closing the accessory does.
-    timer.schedule(
-        {
+    val cancelDeadline =
+        deadlines.schedule(handshakeTimeout) {
             if (phase.compareAndSet(Phase.HANDSHAKING, Phase.ENDED)) {
                 onState(ConnectionState.Failed("no answer to hello within $handshakeTimeout"))
                 close()
             }
-        },
-        handshakeTimeout.inWholeMilliseconds,
-        TimeUnit.MILLISECONDS,
-    )
+        }
     try {
         channel.send(Hello(HELLO_REQUEST_ID, PROTOCOL_VERSION, appVersion))
         val result = awaitWelcome(channel)
@@ -48,7 +59,7 @@ fun runSession(
             return
         }
         if (!phase.compareAndSet(Phase.HANDSHAKING, Phase.CONNECTED)) return
-        timer.shutdownNow()
+        cancelDeadline()
         onState(result)
         while (true) {
             channel.receive()
@@ -57,7 +68,7 @@ fun runSession(
         if (phase.getAndSet(Phase.ENDED) == Phase.ENDED) return
         onState(if (e is MalformedFrameException) ConnectionState.Failed(e.message.orEmpty()) else ConnectionState.Disconnected)
     } finally {
-        timer.shutdownNow()
+        cancelDeadline()
     }
 }
 

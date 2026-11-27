@@ -18,9 +18,10 @@ import java.io.IOException
 import java.io.InputStream
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import kotlin.concurrent.thread
+import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
-import kotlin.time.TimeSource
 
 class SessionTest {
     private val welcome = """{"type":"welcome","id":0,"protocol_version":1,"software_version":"0.2.0"}"""
@@ -31,7 +32,7 @@ class SessionTest {
     fun `sends hello with the protocol and app versions first`() {
         val output = ByteArrayOutputStream()
 
-        runSession(AccessoryChannel(ByteArrayInputStream(ByteArray(0)), output), "0.1.0", close = {}) {}
+        runSession(AccessoryChannel(ByteArrayInputStream(ByteArray(0)), output), "0.1.0", close = {}, ManualDeadlineScheduler()) {}
 
         val frame = FrameReader(ByteArrayInputStream(output.toByteArray())).read()
         val hello = protocolJson.decodeFromString(AppMessage.serializer(), frame.body.decodeToString())
@@ -98,54 +99,81 @@ class SessionTest {
     }
 
     @Test
-    fun `fails and closes the accessory when device does not answer hello within the deadline`() {
+    fun `fails and closes the accessory when the deadline passes while waiting for welcome`() {
         val input = StallingInputStream(ByteArray(0))
+        val deadlines = ManualDeadlineScheduler()
         val states = CopyOnWriteArrayList<ConnectionState>()
 
-        runSession(AccessoryChannel(input, ByteArrayOutputStream()), "0.1.0", close = input::close, 100.milliseconds) { states += it }
+        val session = startSession(input, deadlines, 100.milliseconds) { states += it }
+        try {
+            assertTrue("session did not block on read", input.awaitBlocked())
 
-        assertEquals(
-            listOf(ConnectionState.Connecting, ConnectionState.Failed("no answer to hello within 100ms")),
-            states,
-        )
-        assertTrue(input.closed)
+            deadlines.fire()
+
+            session.join(JOIN_TIMEOUT_MILLIS)
+            assertFalse("session did not return after close", session.isAlive)
+            assertEquals(
+                listOf(ConnectionState.Connecting, ConnectionState.Failed("no answer to hello within 100ms")),
+                states,
+            )
+            assertTrue(input.closed)
+        } finally {
+            input.close()
+            session.join(JOIN_TIMEOUT_MILLIS)
+        }
     }
 
     @Test
-    fun `waits HANDSHAKE_TIMEOUT for welcome by default`() {
-        val input = StallingInputStream(ByteArray(0))
-        val states = CopyOnWriteArrayList<ConnectionState>()
-        val started = TimeSource.Monotonic.markNow()
+    fun `schedules the deadline HANDSHAKE_TIMEOUT after hello by default`() {
+        val deadlines = ManualDeadlineScheduler()
 
-        runSession(AccessoryChannel(input, ByteArrayOutputStream()), "0.1.0", close = input::close) { states += it }
+        runSession(AccessoryChannel(ByteArrayInputStream(ByteArray(0)), ByteArrayOutputStream()), "0.1.0", close = {}, deadlines) {}
 
-        assertTrue(started.elapsedNow() >= HANDSHAKE_TIMEOUT)
-        assertEquals(ConnectionState.Failed("no answer to hello within $HANDSHAKE_TIMEOUT"), states.last())
+        assertEquals(HANDSHAKE_TIMEOUT, deadlines.delay)
     }
 
     @Test
-    fun `stays connected past the deadline once welcome arrives`() {
+    fun `stays connected when the deadline passes after welcome`() {
         val input = StallingInputStream(jsonFrame(welcome))
+        val deadlines = ManualDeadlineScheduler()
         val states = CopyOnWriteArrayList<ConnectionState>()
+        val connected = CountDownLatch(1)
+
         val session =
-            thread {
-                runSession(AccessoryChannel(input, ByteArrayOutputStream()), "0.1.0", close = input::close, 100.milliseconds) {
-                    states += it
-                }
+            startSession(input, deadlines) {
+                states += it
+                if (it is ConnectionState.Connected) connected.countDown()
             }
+        try {
+            assertTrue("session did not connect", connected.await(JOIN_TIMEOUT_MILLIS, TimeUnit.MILLISECONDS))
 
-        Thread.sleep(500)
-        assertEquals(listOf(ConnectionState.Connecting, ConnectionState.Connected("0.2.0")), states)
-        assertFalse(input.closed)
+            deadlines.fire()
 
-        input.close()
-        session.join(5_000)
+            assertEquals(listOf(ConnectionState.Connecting, ConnectionState.Connected("0.2.0")), states)
+            assertTrue(deadlines.cancelled)
+            assertFalse(input.closed)
+        } finally {
+            input.close()
+            session.join(JOIN_TIMEOUT_MILLIS)
+        }
         assertEquals(ConnectionState.Disconnected, states.last())
     }
 
+    private fun startSession(
+        input: InputStream,
+        deadlines: DeadlineScheduler,
+        handshakeTimeout: Duration = HANDSHAKE_TIMEOUT,
+        onState: (ConnectionState) -> Unit,
+    ): Thread =
+        thread(isDaemon = true) {
+            runSession(AccessoryChannel(input, ByteArrayOutputStream()), "0.1.0", input::close, deadlines, handshakeTimeout, onState)
+        }
+
     private fun statesWhileReading(bytes: ByteArray): List<ConnectionState> {
         val states = mutableListOf<ConnectionState>()
-        runSession(AccessoryChannel(ByteArrayInputStream(bytes), ByteArrayOutputStream()), "0.1.0", close = {}) { states += it }
+        runSession(AccessoryChannel(ByteArrayInputStream(bytes), ByteArrayOutputStream()), "0.1.0", close = {}, ManualDeadlineScheduler()) {
+            states += it
+        }
         return states
     }
 }
@@ -155,8 +183,11 @@ private class StallingInputStream(
 ) : InputStream() {
     private val available = ByteArrayInputStream(bytes)
     private val closedLatch = CountDownLatch(1)
+    private val blockedLatch = CountDownLatch(1)
 
     val closed: Boolean get() = closedLatch.count == 0L
+
+    fun awaitBlocked(): Boolean = blockedLatch.await(JOIN_TIMEOUT_MILLIS, TimeUnit.MILLISECONDS)
 
     override fun read(): Int {
         val buffer = ByteArray(1)
@@ -169,6 +200,7 @@ private class StallingInputStream(
         len: Int,
     ): Int {
         if (available.available() > 0) return available.read(b, off, len)
+        blockedLatch.countDown()
         closedLatch.await()
         throw IOException("stream closed")
     }
@@ -177,3 +209,26 @@ private class StallingInputStream(
         closedLatch.countDown()
     }
 }
+
+private class ManualDeadlineScheduler : DeadlineScheduler {
+    @Volatile var delay: Duration? = null
+
+    @Volatile var cancelled = false
+
+    @Volatile private var action: (() -> Unit)? = null
+
+    override fun schedule(
+        delay: Duration,
+        action: () -> Unit,
+    ): () -> Unit {
+        this.delay = delay
+        this.action = action
+        return { cancelled = true }
+    }
+
+    fun fire() {
+        checkNotNull(action) { "no deadline scheduled" }()
+    }
+}
+
+private const val JOIN_TIMEOUT_MILLIS = 5_000L
