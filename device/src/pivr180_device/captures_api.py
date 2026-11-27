@@ -1,4 +1,5 @@
 import json
+from collections.abc import Callable
 from io import BytesIO
 from pathlib import Path
 from typing import Any, Literal
@@ -32,7 +33,14 @@ def capture_thumbnail(storage: CaptureStorage, capture_id: str, side: Side) -> b
     return _shrink(directory / IMAGE_FILENAMES[side])
 
 
-def captures_router(storage: CaptureStorage) -> APIRouter:
+def _ignore_deleted(capture_id: str) -> None:
+    pass
+
+
+def captures_router(
+    storage: CaptureStorage,
+    on_deleted: Callable[[str], None] = _ignore_deleted,
+) -> APIRouter:
     router = APIRouter(prefix="/api/captures")
 
     @router.get("")
@@ -57,6 +65,7 @@ def captures_router(storage: CaptureStorage) -> APIRouter:
             storage.delete_capture(capture_id)
         except CaptureNotFoundError as error:
             raise HTTPException(status_code=404) from error
+        on_deleted(capture_id)
 
     return router
 

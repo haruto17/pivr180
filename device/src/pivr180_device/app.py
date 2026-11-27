@@ -228,7 +228,7 @@ def main(
                         preview_router(slot),
                         settings_router(camera_settings),
                         shutdown_router(shutdown_request.request),
-                        captures_router(storage),
+                        captures_router(storage, on_deleted=board.deleted),
                     ]
                 )
                 stack.enter_context(serve_web(app, WEB_HOST, args.web_port))
