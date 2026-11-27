@@ -82,6 +82,43 @@ def test_stops_sending_once_a_write_fails(
     assert "stopped sending to fake phone (pipe error)" in caplog.text
 
 
+def test_a_frame_is_reported_sent_once_it_is_written(port: GatedAccessoryPort):
+    with FrameSender(Connection(port, "fake phone")) as sender:
+        port.hold()
+        delivery = sender.send(json_frame({"type": "ok", "id": 1}))
+        assert port.wait_for_writes_started(1)
+
+        assert not delivery.wait(0)
+        assert not delivery.sent
+        port.release()
+        assert delivery.wait(5.0)
+
+    assert delivery.sent
+
+
+def test_a_frame_is_reported_unsent_when_its_write_fails(port: GatedAccessoryPort):
+    port.write_error = OSError("pipe error")
+
+    with FrameSender(Connection(port, "fake phone")) as sender:
+        failed = sender.send(json_frame({"type": "ok", "id": 1}))
+        assert failed.wait(5.0)
+
+    assert not failed.sent
+
+
+def test_frames_dropped_on_closing_are_reported_unsent(port: GatedAccessoryPort):
+    sender = FrameSender(Connection(port, "fake phone"))
+    queued = sender.send(json_frame({"type": "ok", "id": 1}))
+
+    sender.close()
+    late = sender.send(json_frame({"type": "ok", "id": 2}))
+
+    for delivery in (queued, late):
+        assert delivery.wait(0)
+        assert not delivery.sent
+    assert port.written == []
+
+
 def test_skips_a_frame_too_large_to_send(
     port: GatedAccessoryPort, caplog: pytest.LogCaptureFixture
 ):
