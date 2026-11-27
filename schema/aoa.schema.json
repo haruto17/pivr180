@@ -20,7 +20,9 @@
         { "$ref": "#/$defs/list_captures" },
         { "$ref": "#/$defs/get_thumbnail" },
         { "$ref": "#/$defs/delete_capture" },
-        { "$ref": "#/$defs/shutdown" }
+        { "$ref": "#/$defs/shutdown" },
+        { "$ref": "#/$defs/stop_preview" },
+        { "$ref": "#/$defs/start_preview" }
       ]
     },
     "device_message": {
@@ -141,6 +143,26 @@
         "id": { "$ref": "#/$defs/request_id" }
       }
     },
+    "stop_preview": {
+      "description": "Stop sending preview frames, e.g. while the app is in the background, so that device stops encoding them.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "id"],
+      "properties": {
+        "type": { "const": "stop_preview" },
+        "id": { "$ref": "#/$defs/request_id" }
+      }
+    },
+    "start_preview": {
+      "description": "Send preview frames again after stop_preview.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "id"],
+      "properties": {
+        "type": { "const": "start_preview" },
+        "id": { "$ref": "#/$defs/request_id" }
+      }
+    },
     "welcome": {
       "description": "Answer to hello, telling the app which protocol version device speaks.",
       "type": "object",
@@ -158,7 +180,7 @@
       }
     },
     "ok": {
-      "description": "Answer to shutter, delete_capture and shutdown when the request was accepted.",
+      "description": "Answer to shutter, delete_capture, shutdown, stop_preview and start_preview when the request was accepted.",
       "type": "object",
       "additionalProperties": false,
       "required": ["type", "id"],
