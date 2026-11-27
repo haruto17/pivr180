@@ -4,14 +4,16 @@ import sys
 import time
 from collections.abc import Callable, Iterable, Iterator, Sequence
 from contextlib import AbstractContextManager, ExitStack
+from functools import partial
 from pathlib import Path
 from typing import TextIO
 
 from fastapi import FastAPI
 
 from pivr180_device.aoa.base import UsbBus
-from pivr180_device.aoa.link import AoaLink, LoggingSession
+from pivr180_device.aoa.link import AoaLink
 from pivr180_device.aoa.pyusb import PyUsbBus
+from pivr180_device.aoa.session import AoaServices, AoaSession
 from pivr180_device.atoms3.base import SerialLink
 from pivr180_device.atoms3.pyserial import DEFAULT_PORT, open_serial_link
 from pivr180_device.button import ButtonShutter, Status
@@ -21,7 +23,7 @@ from pivr180_device.camera_settings import CameraSettingsControl, settings_route
 from pivr180_device.captures_api import captures_router
 from pivr180_device.exposure import ExposurePreview, ExposureSettings, ExposureSync
 from pivr180_device.power import power_off
-from pivr180_device.preview import preview_router
+from pivr180_device.preview import PreviewFrames, preview_router
 from pivr180_device.shutdown import ShutdownRequest, shutdown_router
 from pivr180_device.slot import CameraSlot, LiveCameras
 from pivr180_device.status import StatusBoard
@@ -39,6 +41,7 @@ SHUTTER_BUTTON = "button"
 SHUTTER_STDIN = "stdin"
 WEB_HOST = "0.0.0.0"
 DEFAULT_WEB_PORT = 80
+APP_SHUTTER = "app"
 
 OpenPair = Callable[[int, int], AbstractContextManager[CameraPair]]
 OpenLink = Callable[[str], SerialLink]
@@ -206,6 +209,16 @@ def main(
     camera_settings = CameraSettingsControl(slot)
     shutter: ButtonShutter | None = None
     shutdown_request = ShutdownRequest()
+    board = StatusBoard(storage)
+    aoa_services = AoaServices(
+        slot=slot,
+        storage=storage,
+        settings=camera_settings,
+        board=board,
+        preview=PreviewFrames(slot).latest,
+        shutter=lambda: shutdown_request.trigger(APP_SHUTTER),
+        request_shutdown=shutdown_request.request,
+    )
     code = EXIT_OK
     try:
         with ExitStack() as stack:
@@ -223,7 +236,9 @@ def main(
                 # Not exiting: shooting with the button must keep working
                 # without the phone, e.g. when port 80 cannot be bound.
                 logger.exception("web UI is unavailable; shooting continues")
-            stack.enter_context(AoaLink(open_usb_bus(), LoggingSession))
+            stack.enter_context(
+                AoaLink(open_usb_bus(), partial(AoaSession, services=aoa_services))
+            )
             triggers: Iterable[object]
             show: ShowStatus = _ignore_status
             if args.shutter == SHUTTER_BUTTON:
@@ -244,6 +259,7 @@ def main(
                         shutdown_request.until_requested(triggers),
                         show,
                         slot,
+                        board,
                     )
             except Exception:
                 show(Status.ERROR)

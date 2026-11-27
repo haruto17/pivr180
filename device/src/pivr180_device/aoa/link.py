@@ -74,22 +74,6 @@ class Session(Protocol):
 SessionFactory = Callable[[Connection], Session]
 
 
-class LoggingSession:
-    def __init__(self, connection: Connection) -> None:
-        self._connection = connection
-
-    def on_frame(self, frame: Frame) -> None:
-        logger.info(
-            "received a %s frame of %d bytes from %s; not handled yet",
-            frame.kind.name,
-            len(frame.payload),
-            self._connection.name,
-        )
-
-    def on_close(self) -> None:
-        pass
-
-
 class AoaLink:
     def __init__(
         self,

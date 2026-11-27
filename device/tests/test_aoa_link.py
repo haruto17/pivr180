@@ -19,7 +19,6 @@ from pivr180_device.aoa.fake import (
 )
 from pivr180_device.aoa.frame import (
     Frame,
-    FrameKind,
     encode_frame,
     json_frame,
 )
@@ -27,7 +26,6 @@ from pivr180_device.aoa.link import (
     AoaLink,
     Connection,
     ConnectionClosedError,
-    LoggingSession,
 )
 
 HELLO = json_frame({"type": "hello", "id": 1})
@@ -408,15 +406,6 @@ def test_close_stops_the_thread_while_waiting_between_scans():
 
     assert time.monotonic() - started < 5.0
     assert link_threads() == []
-
-
-def test_logging_session_logs_each_frame(caplog):
-    session = LoggingSession(Connection(FakeAccessoryPort(), "phone"))
-
-    with caplog.at_level(logging.INFO):
-        session.on_frame(Frame(FrameKind.PREVIEW, b"abc"))
-
-    assert "PREVIEW frame of 3 bytes from phone" in caplog.text
 
 
 def test_retries_resetting_a_left_accessory_it_had_no_permission_for():

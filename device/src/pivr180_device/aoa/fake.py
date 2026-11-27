@@ -151,8 +151,10 @@ class FakeUsbBus:
 
 
 class GatedAccessoryPort:
-    def __init__(self) -> None:
+    def __init__(self, read_timeout_s: float = 0.01) -> None:
         self._state = threading.Condition()
+        self._read_timeout_s = read_timeout_s
+        self._reads: deque[bytes] = deque()
         self._open = True
         self.write_error: OSError | None = None
         self.writes_started = 0
@@ -160,7 +162,16 @@ class GatedAccessoryPort:
         self.closed = False
 
     def read(self) -> bytes:
-        return b""
+        with self._state:
+            # Not blocking until data comes: like a USB read with a timeout, it
+            # has to return now and then so that the link can see it is stopped.
+            self._state.wait_for(lambda: self._reads, self._read_timeout_s)
+            return self._reads.popleft() if self._reads else b""
+
+    def feed(self, data: bytes) -> None:
+        with self._state:
+            self._reads.append(data)
+            self._state.notify_all()
 
     def write(self, data: bytes) -> None:
         with self._state:

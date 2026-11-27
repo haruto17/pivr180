@@ -35,7 +35,6 @@ from pivr180_device.storage import CaptureNotFoundError, CaptureStorage
 logger = logging.getLogger(__name__)
 
 PREVIEW_INTERVAL_S = 1 / MAX_FPS
-APP_SHUTTER = "app"
 
 
 class Pacer(Protocol):

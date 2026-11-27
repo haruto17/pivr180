@@ -17,8 +17,13 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from pivr180_device.aoa.fake import FakeAccessoryPort, FakeUsbBus, fake_accessory
-from pivr180_device.aoa.frame import encode_frame, json_frame
+from pivr180_device.aoa.fake import (
+    FakeAccessoryPort,
+    FakeUsbBus,
+    GatedAccessoryPort,
+    fake_accessory,
+)
+from pivr180_device.aoa.frame import FrameDecoder, FrameKind, encode_frame, json_frame
 from pivr180_device.app import (
     EXIT_ERROR,
     EXIT_INTERRUPTED,
@@ -1621,29 +1626,109 @@ def aoa_link_threads() -> list[threading.Thread]:
     ]
 
 
+HELLO = {"type": "hello", "id": 1, "protocol_version": 2, "app_version": "0.1.0"}
+
+
+def aoa_answers(written: list[bytes]) -> list[tuple[str, Any]]:
+    answers: list[tuple[str, Any]] = []
+    for frame in FrameDecoder().feed(b"".join(written)):
+        if frame.kind == FrameKind.JSON:
+            message = json.loads(frame.payload)
+            answers.append((message["type"], message.get("id")))
+        else:
+            answers.append((frame.kind.name, None))
+    return answers
+
+
 def test_main_talks_to_the_phone_over_aoa_while_shooting_and_stops_on_exit(
     pair: CameraPair, tmp_path: Path, caplog
 ):
-    port = FakeAccessoryPort([encode_frame(json_frame({"type": "hello", "id": 1}))])
+    port = FakeAccessoryPort([encode_frame(json_frame(HELLO))])
     bus = FakeUsbBus([], [fake_accessory((1, 3), port)])
 
-    class EnterOnceTheAppHasSpoken:
+    class EnterOnceTheAppIsWelcomed:
         def __iter__(self) -> Iterator[str]:
-            assert wait_for(port.drained.is_set)
+            assert wait_for(lambda: ("status", None) in aoa_answers(port.written))
             yield "\n"
 
     with caplog.at_level(logging.INFO):
         code = main(
             ["--shutter", "stdin", "--captures-dir", str(tmp_path / "captures")],
             open_pair=OpenPairRecorder(pair),
-            stdin=EnterOnceTheAppHasSpoken(),  # type: ignore[arg-type]
+            stdin=EnterOnceTheAppIsWelcomed(),  # type: ignore[arg-type]
             open_usb_bus=lambda: bus,
         )
 
     assert code == EXIT_OK
     assert len(list((tmp_path / "captures").iterdir())) == 1
-    assert "received a JSON frame" in caplog.text
+    assert aoa_answers(port.written)[:2] == [("welcome", 1), ("status", None)]
+    assert "received hello (id 1)" in caplog.text
     assert port.closed
+    assert aoa_link_threads() == []
+
+
+class EndlessStdin:
+    def __init__(self) -> None:
+        self.release = threading.Event()
+
+    def __iter__(self) -> Iterator[str]:
+        self.release.wait()
+        yield from ()
+
+
+def test_main_shoots_and_powers_off_on_the_phone_s_requests(
+    pair: CameraPair, tmp_path: Path
+):
+    port = GatedAccessoryPort()
+    bus = FakeUsbBus([], [fake_accessory((1, 3), port)])
+    stdin = EndlessStdin()
+    shutdown = ShutdownRecorder()
+    root = tmp_path / "captures"
+
+    def answered(answer: tuple[str, Any]) -> Callable[[list[bytes]], bool]:
+        return lambda written: answer in aoa_answers(written)
+
+    def saved(written: list[bytes]) -> bool:
+        return any(
+            frame.kind == FrameKind.JSON
+            and json.loads(frame.payload).get("capture_count") == 1
+            for frame in FrameDecoder().feed(b"".join(written))
+        )
+
+    stuck: list[str] = []
+
+    def phone() -> None:
+        port.feed(encode_frame(json_frame(HELLO)))
+        # Not sooner: previews come only once the cameras are ready to shoot.
+        if not port.wait_until(answered(("PREVIEW", None))):
+            stuck.append("no preview")
+        port.feed(encode_frame(json_frame({"type": "shutter", "id": 2})))
+        if not (port.wait_until(answered(("ok", 2))) and port.wait_until(saved)):
+            stuck.append("no capture")
+        port.feed(encode_frame(json_frame({"type": "shutdown", "id": 3})))
+        # Not left blocked on stdin: main would never return if shutdown failed.
+        if not port.wait_until(answered(("ok", 3))):
+            stuck.append("no shutdown")
+            stdin.release.set()
+
+    talking = threading.Thread(target=phone)
+    talking.start()
+    try:
+        code = main(
+            ["--shutter", "stdin", "--captures-dir", str(root)],
+            open_pair=OpenPairRecorder(pair),
+            stdin=stdin,  # type: ignore[arg-type]
+            open_usb_bus=lambda: bus,
+            shutdown=shutdown,
+        )
+    finally:
+        stdin.release.set()
+        talking.join()
+
+    assert stuck == []
+    assert code == EXIT_OK
+    assert len(list(root.iterdir())) == 1
+    assert shutdown.calls == [()]
     assert aoa_link_threads() == []
 
 
