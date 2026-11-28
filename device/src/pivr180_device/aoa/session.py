@@ -103,6 +103,9 @@ class PreviewStream:
     def pause(self) -> None:
         with self._state:
             self._streaming = False
+            # Not waiting for a preview being written: the sender took it before
+            # the caller's next frame was queued, and it writes frames in order.
+            self._sender.drop_preview()
 
     def close(self) -> None:
         with self._state:
@@ -138,7 +141,10 @@ class PreviewStream:
                     logger.info("preview for %s is back", self._name)
                     failing = False
             if jpeg is not None:
-                self._sender.send_preview(preview_frame(jpeg))
+                frame = preview_frame(jpeg)
+                with self._state:
+                    if self._streaming:
+                        self._sender.send_preview(frame)
             # Not shortened by the time taken to encode: the shared preview would
             # then often hand back the JPEG it has just sent.
             self._pacer.wait(self._interval_s)

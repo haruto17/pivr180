@@ -28,6 +28,7 @@ from pivr180_device.aoa.session import (
     SHUTDOWN_OK_TIMEOUT_S,
     AoaServices,
     AoaSession,
+    PreviewStream,
 )
 from pivr180_device.button import Status
 from pivr180_device.camera import CameraPair, FrameMetadata
@@ -109,6 +110,17 @@ class ManualPacer:
     def wait_for_waits(self, count: int, timeout_s: float = 5.0) -> bool:
         with self._state:
             return self._state.wait_for(lambda: len(self.waits) >= count, timeout_s)
+
+
+class RecordingSender:
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+
+    def send_preview(self, frame: Frame) -> None:
+        self.calls.append("send_preview")
+
+    def drop_preview(self) -> None:
+        self.calls.append("drop_preview")
 
 
 def decode(written: list[bytes]) -> list[Frame]:
@@ -580,6 +592,47 @@ def test_start_preview_resumes_previews_after_its_answer(rig: Rig):
         ("ok", 12),
         ("preview", None),
     ]
+
+
+def test_a_preview_taken_while_pausing_is_not_sent():
+    taking = threading.Event()
+    release = threading.Event()
+
+    def preview() -> bytes:
+        taking.set()
+        release.wait()
+        return b"\xff\xd8\xff\xd9"
+
+    sender = RecordingSender()
+    pacer = ManualPacer()
+    stream = PreviewStream(preview, sender, "fake phone", pacer)  # type: ignore[arg-type]
+    stream.start()
+    try:
+        stream.resume()
+        assert taking.wait(timeout=5)
+        stream.pause()
+        release.set()
+        assert pacer.wait_for_waits(1)
+    finally:
+        release.set()
+        stream.close()
+
+    assert "send_preview" not in sender.calls
+
+
+def test_pausing_drops_the_preview_waiting_to_be_sent():
+    sender = RecordingSender()
+    pacer = ManualPacer()
+    stream = PreviewStream(lambda: b"\xff\xd8\xff\xd9", sender, "fake phone", pacer)  # type: ignore[arg-type]
+    stream.start()
+    try:
+        stream.resume()
+        assert pacer.wait_for_waits(1)
+        stream.pause()
+    finally:
+        stream.close()
+
+    assert sender.calls == ["send_preview", "drop_preview"]
 
 
 def test_previews_go_on_during_a_shot(rig: Rig):
