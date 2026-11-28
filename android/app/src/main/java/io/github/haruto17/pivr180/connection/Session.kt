@@ -39,6 +39,7 @@ fun runSession(
     close: () -> Unit,
     deadlines: DeadlineScheduler = executorDeadlineScheduler,
     handshakeTimeout: Duration = HANDSHAKE_TIMEOUT,
+    onIncoming: (Incoming) -> Unit = {},
     onError: (IOException) -> Unit,
     onState: (ConnectionState) -> Unit,
 ) {
@@ -63,7 +64,7 @@ fun runSession(
         cancelDeadline()
         onState(result)
         while (true) {
-            channel.receive()
+            onIncoming(channel.receive())
         }
     } catch (e: IOException) {
         if (phase.getAndSet(Phase.ENDED) == Phase.ENDED) return
