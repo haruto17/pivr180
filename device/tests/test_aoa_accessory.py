@@ -125,7 +125,7 @@ def test_switch_sends_the_default_identity():
         b"pivr180\0",
         b"pivr180\0",
         b"pivr180 stereo camera\0",
-        b"1\0",
+        b"2\0",
         b"https://github.com/haruto17/pivr180\0",
         b"\0",
     ]

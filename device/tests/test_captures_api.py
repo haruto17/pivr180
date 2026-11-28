@@ -44,11 +44,16 @@ def root(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
-def client(root: Path, tmp_path: Path) -> TestClient:
+def deleted_ids() -> list[str]:
+    return []
+
+
+@pytest.fixture
+def client(root: Path, tmp_path: Path, deleted_ids: list[str]) -> TestClient:
     static_dir = tmp_path / "static"
     static_dir.mkdir()
     (static_dir / "index.html").write_text("<!doctype html>", encoding="utf-8")
-    router = captures_router(CaptureStorage(root))
+    router = captures_router(CaptureStorage(root), on_deleted=deleted_ids.append)
     return TestClient(create_app([router], static_dir=static_dir))
 
 
@@ -181,6 +186,17 @@ def test_delete_is_not_found_unless_the_id_names_a_capture(
 
     assert response.status_code == 404
     assert sorted(path.name for path in root.iterdir()) == [kept.name, "notes"]
+
+
+def test_reports_a_deletion_only_once_it_succeeds(
+    root: Path, client: TestClient, deleted_ids: list[str]
+):
+    deleted = add_capture(root, "20261107-123456-001")
+
+    assert client.delete("/api/captures/20261107-123456-002").status_code == 404
+    assert deleted_ids == []
+    assert client.delete(f"/api/captures/{deleted.name}").status_code == 204
+    assert deleted_ids == [deleted.name]
 
 
 def test_delete_cannot_reach_outside_the_capture_root(

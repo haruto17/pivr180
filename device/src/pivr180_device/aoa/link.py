@@ -28,6 +28,9 @@ class Connection:
         self._port = port
         self.name = name
         self._lock = threading.Lock()
+        # Not one lock for both: a write blocks for up to the port's timeout, and
+        # the link reads the flags between reads while the phone is slow to read.
+        self._write_lock = threading.Lock()
         self._closed = False
         self._broken = False
 
@@ -43,26 +46,34 @@ class Connection:
 
     def send(self, frame: Frame) -> None:
         data = encode_frame(frame)
-        with self._lock:
-            if self._closed:
-                raise ConnectionClosedError(f"AOA connection to {self.name} is closed")
-            if self._broken:
-                raise ConnectionClosedError(f"AOA connection to {self.name} is broken")
+        with self._write_lock:
+            with self._lock:
+                if self._closed:
+                    raise ConnectionClosedError(
+                        f"AOA connection to {self.name} is closed"
+                    )
+                if self._broken:
+                    raise ConnectionClosedError(
+                        f"AOA connection to {self.name} is broken"
+                    )
             try:
                 self._port.write(data)
             except OSError:
                 # Not left open: a partial write leaves the app mid-frame, so every
                 # later frame on this stream would be misread.
-                self._broken = True
+                with self._lock:
+                    self._broken = True
                 raise
 
     def close(self) -> None:
         with self._lock:
             self._closed = True
-            try:
-                self._port.close()
-            except OSError as error:
-                logger.debug("could not close %s (%s)", self.name, error)
+        # Not closed under the lock: closing may wait for a write under way to
+        # give up, and the flags must stay readable meanwhile.
+        try:
+            self._port.close()
+        except OSError as error:
+            logger.debug("could not close %s (%s)", self.name, error)
 
 
 class Session(Protocol):
@@ -72,22 +83,6 @@ class Session(Protocol):
 
 
 SessionFactory = Callable[[Connection], Session]
-
-
-class LoggingSession:
-    def __init__(self, connection: Connection) -> None:
-        self._connection = connection
-
-    def on_frame(self, frame: Frame) -> None:
-        logger.info(
-            "received a %s frame of %d bytes from %s; not handled yet",
-            frame.kind.name,
-            len(frame.payload),
-            self._connection.name,
-        )
-
-    def on_close(self) -> None:
-        pass
 
 
 class AoaLink:

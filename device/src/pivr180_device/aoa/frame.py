@@ -7,7 +7,7 @@ from enum import IntEnum
 
 logger = logging.getLogger(__name__)
 
-PROTOCOL_VERSION = 1
+PROTOCOL_VERSION = 2
 HEADER = struct.Struct(">IB")
 THUMBNAIL_ID = struct.Struct(">I")
 MAX_PAYLOAD_BYTES = 4 * 1024 * 1024

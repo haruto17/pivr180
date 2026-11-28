@@ -2,7 +2,7 @@
 
 Pi（device）と Android アプリが AOA でやり取りするメッセージの形。方針は [ADR 0011](../docs/adr/0011-control-camera-from-android-app-over-aoa.md)。
 
-プロトコルのバージョンは **1**。
+プロトコルのバージョンは **2**。
 
 ## 接続
 
@@ -13,7 +13,7 @@ Pi は USB のホストとして、AOA の制御要求 52 で次の識別文字�
 | 0 | 製造元（manufacturer） | `pivr180` |
 | 1 | モデル（model） | `pivr180` |
 | 2 | 説明（description） | `pivr180 stereo camera` |
-| 3 | バージョン（version） | プロトコルのバージョン（`1`） |
+| 3 | バージョン（version） | プロトコルのバージョン（`2`） |
 | 4 | URI | `https://github.com/haruto17/pivr180` |
 | 5 | シリアル番号（serial） | 空 |
 
@@ -98,6 +98,7 @@ Pi と Android アプリのフレームの組み立てと分解のテストは�
 | `get_thumbnail` | サムネイルのフレーム（`0x03`） |
 | `delete_capture` | `ok` |
 | `shutdown` | `ok` |
+| `stop_preview`、`start_preview` | `ok` |
 
 失敗したときは、どの要求にも同じ `id` の `error` で応える。要求として読めないフレーム（JSON でない、`id` がないなど）には、`id` のない `error` で応える。
 
@@ -108,10 +109,19 @@ Pi と Android アプリのフレームの組み立てと分解のテストは�
 3. バージョンが違うときは、`unsupported_protocol_version` の `error` で応え、それ以外の要求には応えない。
 4. `hello` の前に届いた要求には、`handshake_required` の `error` で応える。
 
+### プレビューの停止と再開
+
+アプリが裏に回ったときなど、プレビューを表示しない間は `stop_preview` を送る。Pi はプレビューの JPEG を作るのをやめ、フレームを送らなくなる。`start_preview` で再開する。ハンドシェイクの直後は送る状態から始まる。停止はその接続の間だけ続き、つなぎ直すと送る状態に戻る。
+
 ### 状態
 
 Pi は `status` を要求なしで送る。ハンドシェイクの直後と、どれかの項目が変わったときに送る。`error_message` は `state` が `error` のときだけ持つ。
 
 ### バージョンを上げるとき
+
+| バージョン | 変更 |
+|---|---|
+| 1 | 最初のバージョン |
+| 2 | `stop_preview` と `start_preview` を足した |
 
 メッセージや項目を足す・変えるときは、`aoa.schema.json` と例を直し、プロトコルのバージョンを上げる。どのメッセージも知らない項目を受け付けないので、古いアプリと新しい Pi が混ざると、ハンドシェイクで分かる。

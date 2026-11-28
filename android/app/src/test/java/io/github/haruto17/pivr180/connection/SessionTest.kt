@@ -25,7 +25,7 @@ import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
 
 class SessionTest {
-    private val welcome = """{"type":"welcome","id":0,"protocol_version":1,"software_version":"0.2.0"}"""
+    private val welcome = """{"type":"welcome","id":0,"protocol_version":2,"software_version":"0.2.0"}"""
     private val status =
         """{"type":"status","state":"idle","capture_count":0,"free_bytes":1,"last_capture":null}"""
 
@@ -73,12 +73,12 @@ class SessionTest {
 
     @Test
     fun `fails when welcome carries another protocol version`() {
-        val states = statesWhileReading(jsonFrame(welcome.replace("\"protocol_version\":1", "\"protocol_version\":2")))
+        val states = statesWhileReading(jsonFrame(welcome.replace("\"protocol_version\":2", "\"protocol_version\":1")))
 
         assertEquals(
             listOf(
                 ConnectionState.Connecting,
-                ConnectionState.Failed("device speaks protocol version 2, app speaks 1"),
+                ConnectionState.Failed("device speaks protocol version 1, app speaks 2"),
             ),
             states,
         )

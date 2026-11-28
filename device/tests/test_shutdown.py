@@ -76,6 +76,30 @@ def test_request_can_be_repeated(blocking: BlockingTriggers):
     assert request.requested
 
 
+def test_triggers_from_elsewhere_join_the_triggers(blocking: BlockingTriggers):
+    request = ShutdownRequest()
+    triggers = request.until_requested(blocking)
+
+    assert next(triggers) == "first"
+    assert next(triggers) == "second"
+    request.trigger("app")
+
+    assert next(triggers) == "app"
+
+
+def test_triggers_from_elsewhere_after_a_request_are_dropped(
+    blocking: BlockingTriggers,
+):
+    request = ShutdownRequest()
+    triggers = request.until_requested(blocking)
+
+    assert next(triggers) == "first"
+    request.request()
+    request.trigger("app")
+
+    assert list(triggers) == []
+
+
 def test_errors_from_the_triggers_are_raised_to_the_consumer():
     def failing() -> Iterator[object]:
         yield "first"

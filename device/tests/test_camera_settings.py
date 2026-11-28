@@ -10,6 +10,7 @@ from pivr180_device.camera.fake import FakeCamera, FakeFrame
 from pivr180_device.camera_settings import (
     SETTINGS_PATH,
     CameraSettings,
+    CameraSettingsControl,
     settings_router,
 )
 from pivr180_device.exposure import ExposureSettings, ExposureSync
@@ -48,7 +49,7 @@ def slot() -> CameraSlot:
 
 @pytest.fixture
 def client(slot: CameraSlot) -> TestClient:
-    return TestClient(create_app([settings_router(slot)]))
+    return TestClient(create_app([settings_router(CameraSettingsControl(slot))]))
 
 
 @pytest.fixture
