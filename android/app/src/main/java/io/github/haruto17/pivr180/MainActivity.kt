@@ -19,6 +19,7 @@ import io.github.haruto17.pivr180.ui.CaptureScreen
 import io.github.haruto17.pivr180.ui.ConnectionScreen
 import io.github.haruto17.pivr180.ui.Destination
 import io.github.haruto17.pivr180.ui.MainScreen
+import io.github.haruto17.pivr180.ui.SettingsScreen
 import io.github.haruto17.pivr180.ui.ShutDownScreen
 
 class MainActivity : ComponentActivity() {
@@ -52,6 +53,14 @@ class MainActivity : ComponentActivity() {
                                         onShutter = viewModel::shutter,
                                         onShutdown = viewModel::shutdown,
                                         onDismissNotice = viewModel::dismissNotice,
+                                    )
+                                }
+
+                                Destination.SETTINGS -> {
+                                    SettingsScreen(
+                                        state = screen.state.settings,
+                                        onLoad = viewModel::loadSettings,
+                                        onChange = viewModel::changeSettings,
                                     )
                                 }
                             }

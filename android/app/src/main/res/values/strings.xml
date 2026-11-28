@@ -39,4 +39,22 @@
     <string name="shutdown_confirm">シャットダウンする</string>
     <string name="cancel">キャンセル</string>
     <string name="shut_down">Pi をシャットダウンしました。</string>
+    <string name="destination_settings">撮影設定</string>
+    <string name="settings_loading">撮影設定を読み込んでいます…</string>
+    <string name="settings_load_failed">撮影設定を読み込めませんでした: %1$s</string>
+    <string name="settings_save_unconfirmed">撮影設定を送りましたが、Pi から応答がありませんでした（%1$s）。反映されたか分からないので、読み込み直してください。</string>
+    <string name="settings_reload">読み込み直す</string>
+    <string name="settings_exposure_value">露出補正: %1$s</string>
+    <string name="settings_white_balance">ホワイトバランス</string>
+    <string name="settings_contrast">コントラスト: %1$s</string>
+    <string name="white_balance_auto">自動</string>
+    <string name="white_balance_incandescent">白熱電球</string>
+    <string name="white_balance_tungsten">タングステン</string>
+    <string name="white_balance_fluorescent">蛍光灯</string>
+    <string name="white_balance_indoor">室内</string>
+    <string name="white_balance_daylight">太陽光</string>
+    <string name="white_balance_cloudy">くもり</string>
+    <string name="settings_saving">Pi に送っています…</string>
+    <string name="settings_saved">Pi に保存しました。Pi を再起動しても、この設定で撮影します。</string>
+    <string name="settings_save_failed">撮影設定を変えられませんでした: %1$s。Pi の設定に戻しました。</string>
 </resources>

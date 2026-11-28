@@ -21,6 +21,7 @@ import io.github.haruto17.pivr180.capture.CaptureState
 import io.github.haruto17.pivr180.protocol.AccessoryChannel
 import io.github.haruto17.pivr180.protocol.AppMessage
 import io.github.haruto17.pivr180.protocol.BoundedReadInputStream
+import io.github.haruto17.pivr180.protocol.CameraSettings
 import io.github.haruto17.pivr180.protocol.Incoming
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.Channel
@@ -37,8 +38,8 @@ import java.io.IOException
 
 private const val TAG = "ConnectionViewModel"
 
-// f_accessory fails a bulk read whose buffer is smaller than the USB transfer, so reads go through a buffer of its size,
-// and some kernels also fail a longer one, which BufferedInputStream would pass straight through, so each read is capped too.
+// f_accessory fails a bulk read whose buffer is smaller than the USB transfer, so reads go through a buffer of its size.
+// Each read is capped too, as a precaution: BufferedInputStream would pass a longer read straight through to the accessory.
 private const val ACCESSORY_READ_BUFFER_SIZE = 16384
 
 class ConnectionViewModel(
@@ -170,6 +171,14 @@ class ConnectionViewModel(
 
     fun dismissNotice() {
         controller?.dismissNotice()
+    }
+
+    fun loadSettings() {
+        controller?.loadSettings()
+    }
+
+    fun changeSettings(settings: CameraSettings) {
+        controller?.changeSettings(settings)
     }
 
     fun setPreviewWanted(wanted: Boolean) {

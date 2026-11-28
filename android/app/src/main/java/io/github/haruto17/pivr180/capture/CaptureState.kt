@@ -11,6 +11,7 @@ data class CaptureState<out I>(
     val shutterPending: Boolean = false,
     val shutdown: ShutdownState = ShutdownState.NONE,
     val notice: Notice? = null,
+    val settings: SettingsState = SettingsState.NotLoaded,
 ) {
     val canShutter: Boolean
         get() = status != null && status.state != DeviceState.CAPTURING && !shutterPending && shutdown == ShutdownState.NONE
