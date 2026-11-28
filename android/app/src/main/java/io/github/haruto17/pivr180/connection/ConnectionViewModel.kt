@@ -100,7 +100,12 @@ class ConnectionViewModel(
                     ),
                     FileOutputStream(descriptor.fileDescriptor),
                 )
-            runSession(channel, BuildConfig.VERSION_NAME, close = { closeDescriptor(descriptor) }) { state ->
+            runSession(
+                channel,
+                BuildConfig.VERSION_NAME,
+                close = { closeDescriptor(descriptor) },
+                onError = { Log.w(TAG, "accessory session ended by an I/O failure", it) },
+            ) { state ->
                 viewModelScope.launch(Dispatchers.Main) {
                     if (openAccessory !== descriptor) return@launch
                     mutableState.value = state

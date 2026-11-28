@@ -4,6 +4,7 @@ import io.github.haruto17.pivr180.protocol.AccessoryChannel
 import io.github.haruto17.pivr180.protocol.AppMessage
 import io.github.haruto17.pivr180.protocol.FrameReader
 import io.github.haruto17.pivr180.protocol.Hello
+import io.github.haruto17.pivr180.protocol.MalformedFrameException
 import io.github.haruto17.pivr180.protocol.PROTOCOL_VERSION
 import io.github.haruto17.pivr180.protocol.hex
 import io.github.haruto17.pivr180.protocol.jsonFrame
@@ -32,7 +33,13 @@ class SessionTest {
     fun `sends hello with the protocol and app versions first`() {
         val output = ByteArrayOutputStream()
 
-        runSession(AccessoryChannel(ByteArrayInputStream(ByteArray(0)), output), "0.1.0", close = {}, ManualDeadlineScheduler()) {}
+        runSession(
+            AccessoryChannel(ByteArrayInputStream(ByteArray(0)), output),
+            "0.1.0",
+            close = {},
+            ManualDeadlineScheduler(),
+            onError = {},
+        ) {}
 
         val frame = FrameReader(ByteArrayInputStream(output.toByteArray())).read()
         val hello = protocolJson.decodeFromString(AppMessage.serializer(), frame.body.decodeToString())
@@ -92,6 +99,38 @@ class SessionTest {
     }
 
     @Test
+    fun `reports the read failure that disconnects it`() {
+        val failure = IOException("read failed")
+        val errors = mutableListOf<IOException>()
+
+        runSession(
+            AccessoryChannel(FailingInputStream(jsonFrame(welcome), failure), ByteArrayOutputStream()),
+            "0.1.0",
+            close = {},
+            ManualDeadlineScheduler(),
+            onError = { errors += it },
+        ) {}
+
+        assertEquals(listOf(failure), errors)
+    }
+
+    @Test
+    fun `reports the malformed frame that fails it`() {
+        val errors = mutableListOf<IOException>()
+
+        runSession(
+            AccessoryChannel(ByteArrayInputStream(jsonFrame(welcome) + hex("ffffffff 01")), ByteArrayOutputStream()),
+            "0.1.0",
+            close = {},
+            ManualDeadlineScheduler(),
+            onError = { errors += it },
+        ) {}
+
+        assertEquals(listOf("frame body of 4294967295 bytes exceeds 4194304"), errors.map { it.message })
+        assertTrue(errors.single() is MalformedFrameException)
+    }
+
+    @Test
     fun `is disconnected when the stream ends before welcome`() {
         val states = statesWhileReading(ByteArray(0))
 
@@ -127,7 +166,13 @@ class SessionTest {
     fun `schedules the deadline HANDSHAKE_TIMEOUT after hello by default`() {
         val deadlines = ManualDeadlineScheduler()
 
-        runSession(AccessoryChannel(ByteArrayInputStream(ByteArray(0)), ByteArrayOutputStream()), "0.1.0", close = {}, deadlines) {}
+        runSession(
+            AccessoryChannel(ByteArrayInputStream(ByteArray(0)), ByteArrayOutputStream()),
+            "0.1.0",
+            close = {},
+            deadlines,
+            onError = {},
+        ) {}
 
         assertEquals(HANDSHAKE_TIMEOUT, deadlines.delay)
     }
@@ -166,15 +211,50 @@ class SessionTest {
         onState: (ConnectionState) -> Unit,
     ): Thread =
         thread(isDaemon = true) {
-            runSession(AccessoryChannel(input, ByteArrayOutputStream()), "0.1.0", input::close, deadlines, handshakeTimeout, onState)
+            runSession(
+                AccessoryChannel(input, ByteArrayOutputStream()),
+                "0.1.0",
+                input::close,
+                deadlines,
+                handshakeTimeout,
+                onError = {},
+                onState = onState,
+            )
         }
 
     private fun statesWhileReading(bytes: ByteArray): List<ConnectionState> {
         val states = mutableListOf<ConnectionState>()
-        runSession(AccessoryChannel(ByteArrayInputStream(bytes), ByteArrayOutputStream()), "0.1.0", close = {}, ManualDeadlineScheduler()) {
+        runSession(
+            AccessoryChannel(ByteArrayInputStream(bytes), ByteArrayOutputStream()),
+            "0.1.0",
+            close = {},
+            ManualDeadlineScheduler(),
+            onError = {},
+        ) {
             states += it
         }
         return states
+    }
+}
+
+private class FailingInputStream(
+    bytes: ByteArray,
+    private val failure: IOException,
+) : InputStream() {
+    private val available = ByteArrayInputStream(bytes)
+
+    override fun read(): Int {
+        if (available.available() == 0) throw failure
+        return available.read()
+    }
+
+    override fun read(
+        b: ByteArray,
+        off: Int,
+        len: Int,
+    ): Int {
+        if (available.available() == 0) throw failure
+        return available.read(b, off, len)
     }
 }
 
