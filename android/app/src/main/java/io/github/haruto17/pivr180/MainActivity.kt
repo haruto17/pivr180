@@ -15,6 +15,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.github.haruto17.pivr180.capture.AppScreen
 import io.github.haruto17.pivr180.capture.appScreen
 import io.github.haruto17.pivr180.connection.ConnectionViewModel
+import io.github.haruto17.pivr180.ui.CaptureListScreen
 import io.github.haruto17.pivr180.ui.CaptureScreen
 import io.github.haruto17.pivr180.ui.ConnectionScreen
 import io.github.haruto17.pivr180.ui.Destination
@@ -52,6 +53,16 @@ class MainActivity : ComponentActivity() {
                                         onShutter = viewModel::shutter,
                                         onShutdown = viewModel::shutdown,
                                         onDismissNotice = viewModel::dismissNotice,
+                                    )
+                                }
+
+                                Destination.CAPTURES -> {
+                                    CaptureListScreen(
+                                        state = screen.state.captureList,
+                                        onRefresh = viewModel::refreshCaptures,
+                                        onVisibleCapturesChanged = viewModel::showCaptures,
+                                        onDelete = viewModel::deleteCapture,
+                                        onDismissNotice = viewModel::dismissCaptureListNotice,
                                     )
                                 }
                             }
