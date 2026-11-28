@@ -46,13 +46,15 @@ class CaptureController<I>(
 ) {
     private val requests =
         RequestTracker<Request>(deadlines, requestTimeout) {
+            // Not left as it was: the device may have switched and its late ok is dropped.
+            if (it is Request.Preview) deviceSendsPreview = null
             fail(it, "no answer within $requestTimeout")
             publish()
         }
     private var state = CaptureState<I>()
     private var started = false
     private var ended = false
-    private var deviceSendsPreview = true
+    private var deviceSendsPreview: Boolean? = true
     private var previewRequestPending = false
 
     fun start() {
