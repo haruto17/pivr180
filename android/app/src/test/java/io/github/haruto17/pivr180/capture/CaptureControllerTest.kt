@@ -336,6 +336,44 @@ class CaptureControllerTest {
     }
 
     @Test
+    fun `starts the preview in the foreground after a stop that was not answered in time`() {
+        val controller = started()
+        controller.receive(Mode(1, CaptureMode.PHOTO))
+        controller.setPreviewWanted(false)
+        deadlines.fireAll()
+
+        controller.setPreviewWanted(true)
+
+        assertEquals(StartPreview(sentOnly<StopPreview>().id + 1), sent.last())
+    }
+
+    @Test
+    fun `stops the preview in the background after a start that was not answered in time`() {
+        val controller = controller(previewWanted = false).also { it.start() }
+        controller.receive(Mode(1, CaptureMode.PHOTO))
+        controller.receive(Ok(sentOnly<StopPreview>().id))
+        controller.setPreviewWanted(true)
+        deadlines.fireAll()
+        sent.clear()
+
+        controller.setPreviewWanted(false)
+
+        assertTrue(sent.single() is StopPreview)
+    }
+
+    @Test
+    fun `does not resend a preview request on its own when it is not answered in time`() {
+        val controller = started()
+        controller.receive(Mode(1, CaptureMode.PHOTO))
+        controller.setPreviewWanted(false)
+
+        deadlines.fireAll()
+
+        assertEquals(Notice(NoticeKind.PREVIEW_FAILED, "no answer within $REQUEST_TIMEOUT"), state.notice)
+        assertEquals(1, sent.size)
+    }
+
+    @Test
     fun `asks the device to shut down once and stops allowing the shutter`() {
         val controller = started()
         controller.receive(idle())
