@@ -1,7 +1,7 @@
 import threading
 import time
 from collections import deque
-from collections.abc import Hashable, Iterable, Sequence
+from collections.abc import Callable, Hashable, Iterable, Sequence
 
 from pivr180_device.aoa.accessory import (
     GET_PROTOCOL,
@@ -148,3 +148,62 @@ class FakeUsbBus:
         if isinstance(scan, OSError):
             raise scan
         return list(scan)
+
+
+class GatedAccessoryPort:
+    def __init__(self, read_timeout_s: float = 0.01) -> None:
+        self._state = threading.Condition()
+        self._read_timeout_s = read_timeout_s
+        self._reads: deque[bytes] = deque()
+        self._open = True
+        self.write_error: OSError | None = None
+        self.writes_started = 0
+        self.written: list[bytes] = []
+        self.closed = False
+
+    def read(self) -> bytes:
+        with self._state:
+            # Not blocking until data comes: like a USB read with a timeout, it
+            # has to return now and then so that the link can see it is stopped.
+            self._state.wait_for(lambda: self._reads, self._read_timeout_s)
+            return self._reads.popleft() if self._reads else b""
+
+    def feed(self, data: bytes) -> None:
+        with self._state:
+            self._reads.append(data)
+            self._state.notify_all()
+
+    def write(self, data: bytes) -> None:
+        with self._state:
+            self.writes_started += 1
+            self._state.notify_all()
+            self._state.wait_for(lambda: self._open)
+            if self.write_error is not None:
+                raise self.write_error
+            self.written.append(data)
+            self._state.notify_all()
+
+    def close(self) -> None:
+        self.closed = True
+
+    def hold(self) -> None:
+        with self._state:
+            self._open = False
+
+    def release(self) -> None:
+        with self._state:
+            self._open = True
+            self._state.notify_all()
+
+    def wait_for_writes_started(self, count: int, timeout_s: float = 5.0) -> bool:
+        with self._state:
+            return self._state.wait_for(lambda: self.writes_started >= count, timeout_s)
+
+    def wait_for_written(self, count: int, timeout_s: float = 5.0) -> bool:
+        return self.wait_until(lambda written: len(written) >= count, timeout_s)
+
+    def wait_until(
+        self, predicate: Callable[[list[bytes]], bool], timeout_s: float = 5.0
+    ) -> bool:
+        with self._state:
+            return self._state.wait_for(lambda: predicate(self.written), timeout_s)

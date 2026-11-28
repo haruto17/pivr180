@@ -120,7 +120,7 @@ VALID_VARIANTS = [
     pytest.param(APP, "shutter", _set(0, "id"), id="zero_id"),
     pytest.param(APP, "shutter", _set(2_147_483_647, "id"), id="max_id"),
     pytest.param(
-        APP, "hello", _set(2, "protocol_version"), id="hello_newer_protocol_version"
+        APP, "hello", _set(3, "protocol_version"), id="hello_newer_protocol_version"
     ),
     pytest.param(
         APP, "set_settings", _set(-2, "settings", "exposure_value"), id="min_ev"
@@ -242,6 +242,12 @@ INVALID_CASES = [
     pytest.param(APP, "get_thumbnail", _set("both", "side"), id="unknown_side"),
     pytest.param(
         APP, "delete_capture", _delete("capture_id"), id="delete_missing_capture_id"
+    ),
+    pytest.param(APP, "stop_preview", _delete("id"), id="stop_preview_missing_id"),
+    pytest.param(APP, "stop_preview", _set(5, "fps"), id="stop_preview_extra_property"),
+    pytest.param(APP, "start_preview", _delete("id"), id="start_preview_missing_id"),
+    pytest.param(
+        APP, "start_preview", _set(5, "max_fps"), id="start_preview_extra_property"
     ),
     pytest.param(
         DEVICE,

@@ -41,6 +41,9 @@ class ShutdownRequest:
         self._requested.set()
         self._events.put(_Wake())
 
+    def trigger(self, value: object) -> None:
+        self._events.put(_Trigger(value))
+
     def until_requested(self, triggers: Iterable[object]) -> Iterator[object]:
         # Not iterated here: reading stdin blocks with no way to interrupt it,
         # so a request made meanwhile would wait for the next line.
