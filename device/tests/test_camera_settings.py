@@ -1,5 +1,8 @@
+import json
+import logging
 import threading
 from collections.abc import Iterator
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -8,9 +11,12 @@ from fastapi.testclient import TestClient
 from pivr180_device.camera import CameraPair, FrameMetadata
 from pivr180_device.camera.fake import FakeCamera, FakeFrame
 from pivr180_device.camera_settings import (
+    DEFAULT_SETTINGS,
     SETTINGS_PATH,
     CameraSettings,
     CameraSettingsControl,
+    CamerasNotReadyError,
+    SettingsFile,
     settings_router,
 )
 from pivr180_device.exposure import ExposureSettings, ExposureSync
@@ -212,3 +218,216 @@ def test_put_during_a_shot_applies_after_the_shot(
     assert [response.status_code for response in responses] == [200]
     assert left.controls["Contrast"] == 1.2
     assert right.controls["Contrast"] == 1.2
+
+
+class RecordingSettingsFile(SettingsFile):
+    def __init__(self, path: Path) -> None:
+        super().__init__(path)
+        self.saved: list[CameraSettings] = []
+
+    def save(self, settings: CameraSettings) -> None:
+        self.saved.append(settings)
+        super().save(settings)
+
+
+def write_settings(path: Path, settings: dict[str, Any]) -> None:
+    path.write_text(json.dumps(settings), encoding="utf-8")
+
+
+def test_settings_file_round_trips_the_settings(tmp_path: Path):
+    file = SettingsFile(tmp_path / "camera_settings.json")
+    settings = CameraSettings.model_validate(CHANGED)
+
+    file.save(settings)
+
+    assert file.load() == settings
+    assert json.loads(file.path.read_text(encoding="utf-8")) == CHANGED
+
+
+def test_saving_leaves_only_the_settings_file(tmp_path: Path):
+    file = SettingsFile(tmp_path / "camera_settings.json")
+
+    file.save(CameraSettings.model_validate(CHANGED))
+    file.save(DEFAULT_SETTINGS)
+
+    assert [path.name for path in tmp_path.iterdir()] == ["camera_settings.json"]
+    assert file.load() == DEFAULT_SETTINGS
+
+
+def test_saving_keeps_the_old_file_and_no_temporary_file_when_replacing_fails(
+    tmp_path: Path,
+):
+    target = tmp_path / "camera_settings.json"
+    target.mkdir()
+
+    with pytest.raises(OSError):
+        SettingsFile(target).save(CameraSettings.model_validate(CHANGED))
+
+    assert [path.name for path in tmp_path.iterdir()] == ["camera_settings.json"]
+    assert target.is_dir()
+
+
+def test_loading_a_missing_file_gives_the_defaults_without_a_warning(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+):
+    path = tmp_path / "camera_settings.json"
+
+    with caplog.at_level(logging.INFO):
+        settings = SettingsFile(path).load()
+
+    assert settings == DEFAULT_SETTINGS
+    assert [record.levelno for record in caplog.records] == [logging.INFO]
+    assert str(path) in caplog.text
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        b"",
+        b"{",
+        b"\xff\xfe",
+        b"[]",
+        b"null",
+        json.dumps({**CHANGED, "exposure_value": "bright"}).encode(),
+        json.dumps({**CHANGED, "exposure_value": 2.1}).encode(),
+        json.dumps({**CHANGED, "white_balance": "custom"}).encode(),
+        json.dumps({**CHANGED, "contrast": -0.1}).encode(),
+        json.dumps({"exposure_value": -1.5, "white_balance": "daylight"}).encode(),
+        json.dumps({**CHANGED, "saturation": 1.0}).encode(),
+    ],
+)
+def test_loading_a_corrupt_file_gives_the_defaults_with_a_warning(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture, content: bytes
+):
+    path = tmp_path / "camera_settings.json"
+    path.write_bytes(content)
+
+    settings = SettingsFile(path).load()
+
+    assert settings == DEFAULT_SETTINGS
+    assert [record.levelno for record in caplog.records] == [logging.WARNING]
+    assert str(path) in caplog.text
+
+
+def test_loading_an_unreadable_file_gives_the_defaults_with_a_warning(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+):
+    path = tmp_path / "camera_settings.json"
+    path.mkdir()
+
+    settings = SettingsFile(path).load()
+
+    assert settings == DEFAULT_SETTINGS
+    assert [record.levelno for record in caplog.records] == [logging.WARNING]
+    assert str(path) in caplog.text
+
+
+def test_control_starts_with_the_saved_settings(slot: CameraSlot, tmp_path: Path):
+    path = tmp_path / "camera_settings.json"
+    write_settings(path, CHANGED)
+
+    control = CameraSettingsControl(slot, SettingsFile(path))
+
+    assert control.current == CameraSettings.model_validate(CHANGED)
+
+
+def test_put_saves_the_applied_settings(
+    slot: CameraSlot,
+    attached: tuple[LiveCameras, FakeCamera, FakeCamera],
+    tmp_path: Path,
+):
+    file = SettingsFile(tmp_path / "camera_settings.json")
+    client = TestClient(
+        create_app([settings_router(CameraSettingsControl(slot, file))])
+    )
+
+    client.put(SETTINGS_PATH, json=CHANGED)
+
+    assert file.load() == CameraSettings.model_validate(CHANGED)
+
+
+def test_applying_unchanged_settings_does_not_save_again(
+    slot: CameraSlot,
+    attached: tuple[LiveCameras, FakeCamera, FakeCamera],
+    tmp_path: Path,
+):
+    file = RecordingSettingsFile(tmp_path / "camera_settings.json")
+    control = CameraSettingsControl(slot, file)
+    changed = CameraSettings.model_validate(CHANGED)
+
+    control.apply(DEFAULT_SETTINGS)
+    control.apply(changed)
+    control.apply(changed)
+
+    assert file.saved == [changed]
+
+
+def test_settings_are_not_saved_while_the_cameras_are_not_ready(
+    slot: CameraSlot, tmp_path: Path
+):
+    file = RecordingSettingsFile(tmp_path / "camera_settings.json")
+    control = CameraSettingsControl(slot, file)
+
+    with pytest.raises(CamerasNotReadyError):
+        control.apply(CameraSettings.model_validate(CHANGED))
+
+    assert file.saved == []
+    assert not file.path.exists()
+
+
+def test_a_failed_save_is_logged_and_keeps_the_settings_applied(
+    slot: CameraSlot,
+    attached: tuple[LiveCameras, FakeCamera, FakeCamera],
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+):
+    _, left, right = attached
+    path = tmp_path / "missing" / "camera_settings.json"
+    client = TestClient(
+        create_app([settings_router(CameraSettingsControl(slot, SettingsFile(path)))])
+    )
+
+    response = client.put(SETTINGS_PATH, json=CHANGED)
+
+    assert response.status_code == 200
+    assert client.get(SETTINGS_PATH).json() == CHANGED
+    assert left.controls == CHANGED_CONTROLS
+    assert right.controls == CHANGED_CONTROLS
+    assert [record.levelno for record in caplog.records] == [logging.ERROR]
+    assert str(path) in caplog.text
+
+
+def test_restore_applies_the_saved_settings_to_both_cameras(
+    slot: CameraSlot,
+    attached: tuple[LiveCameras, FakeCamera, FakeCamera],
+    tmp_path: Path,
+):
+    _, left, right = attached
+    file = RecordingSettingsFile(tmp_path / "camera_settings.json")
+    write_settings(file.path, CHANGED)
+
+    CameraSettingsControl(slot, file).restore()
+
+    assert left.controls == CHANGED_CONTROLS
+    assert right.controls == CHANGED_CONTROLS
+    assert file.saved == []
+
+
+def test_restore_leaves_the_cameras_alone_with_the_defaults(
+    slot: CameraSlot, attached: tuple[LiveCameras, FakeCamera, FakeCamera]
+):
+    _, left, right = attached
+
+    CameraSettingsControl(slot).restore()
+
+    assert left.controls_history == []
+    assert right.controls_history == []
+
+
+def test_restore_needs_the_cameras_to_be_ready(slot: CameraSlot, tmp_path: Path):
+    path = tmp_path / "camera_settings.json"
+    write_settings(path, CHANGED)
+    control = CameraSettingsControl(slot, SettingsFile(path))
+
+    with pytest.raises(CamerasNotReadyError):
+        control.restore()
