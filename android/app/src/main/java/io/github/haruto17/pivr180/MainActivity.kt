@@ -67,6 +67,17 @@ class MainActivity : ComponentActivity() {
         connect(intent)
     }
 
+    override fun onStart() {
+        super.onStart()
+        viewModel.setPreviewWanted(true)
+    }
+
+    override fun onStop() {
+        super.onStop()
+        // Not stopped across a configuration change: the new activity starts right away and would only restart it.
+        if (!isChangingConfigurations) viewModel.setPreviewWanted(false)
+    }
+
     override fun onResume() {
         super.onResume()
         viewModel.connectToAttachedAccessory()
