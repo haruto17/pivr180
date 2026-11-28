@@ -22,6 +22,7 @@ enum class Destination(
     @param:StringRes val label: Int,
 ) {
     CAPTURE(R.string.destination_capture),
+    SETTINGS(R.string.destination_settings),
 }
 
 @Composable
