@@ -85,6 +85,8 @@ private class StrictInputStream(
 ) : InputStream() {
     private val source = ByteArrayInputStream(bytes)
 
+    override fun available(): Int = throw IOException("Invalid argument")
+
     override fun read(): Int = source.read()
 
     override fun read(
