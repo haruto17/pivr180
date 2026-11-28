@@ -63,6 +63,23 @@ def test_drops_older_previews_while_the_phone_is_slow_to_read(
     ]
 
 
+def test_a_dropped_preview_is_not_sent(port: GatedAccessoryPort):
+    previews = [preview_frame(bytes([0xFF, 0xD8, n, 0xFF, 0xD9])) for n in range(2)]
+    ok = json_frame({"type": "ok", "id": 1})
+
+    with FrameSender(Connection(port, "fake phone")) as sender:
+        port.hold()
+        sender.send_preview(previews[0])
+        assert port.wait_for_writes_started(1)
+        sender.send_preview(previews[1])
+        sender.drop_preview()
+        sender.send(ok)
+        port.release()
+        assert port.wait_for_written(2)
+
+    assert port.written == [encode_frame(previews[0]), encode_frame(ok)]
+
+
 def test_stops_sending_once_a_write_fails(
     port: GatedAccessoryPort, caplog: pytest.LogCaptureFixture
 ):

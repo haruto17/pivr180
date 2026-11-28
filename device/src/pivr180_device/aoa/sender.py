@@ -62,6 +62,10 @@ class FrameSender:
             self._preview = frame
             self._state.notify()
 
+    def drop_preview(self) -> None:
+        with self._state:
+            self._preview = None
+
     def close(self) -> None:
         with self._state:
             self._discard()
