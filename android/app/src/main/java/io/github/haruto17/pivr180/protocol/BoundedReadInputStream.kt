@@ -11,6 +11,9 @@ class BoundedReadInputStream(
         require(maxReadSize > 0) { "maxReadSize must be positive, was $maxReadSize" }
     }
 
+    // Does not ask the fd, because f_accessory rejects FIONREAD with EINVAL.
+    override fun available(): Int = 0
+
     override fun read(): Int = `in`.read()
 
     override fun read(
