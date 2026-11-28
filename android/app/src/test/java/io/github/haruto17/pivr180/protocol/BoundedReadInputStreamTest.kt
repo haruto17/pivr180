@@ -43,6 +43,14 @@ class BoundedReadInputStreamTest {
     }
 
     @Test
+    fun `reports no available bytes without asking the underlying stream`() {
+        val underlying = RecordingInputStream(ByteArray(100))
+
+        assertEquals(0, BoundedReadInputStream(underlying, READ_LIMIT).available())
+        assertEquals(0, underlying.availableCalls)
+    }
+
+    @Test
     fun `rejects a non-positive limit`() {
         assertThrows(IllegalArgumentException::class.java) {
             BoundedReadInputStream(ByteArrayInputStream(ByteArray(0)), 0)
@@ -66,6 +74,12 @@ private class RecordingInputStream(
 ) : InputStream() {
     private val source = ByteArrayInputStream(bytes)
     val requestedLengths = mutableListOf<Int>()
+    var availableCalls = 0
+
+    override fun available(): Int {
+        availableCalls++
+        return source.available()
+    }
 
     override fun read(): Int = source.read()
 
