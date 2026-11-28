@@ -21,6 +21,7 @@ import io.github.haruto17.pivr180.capture.CaptureState
 import io.github.haruto17.pivr180.protocol.AccessoryChannel
 import io.github.haruto17.pivr180.protocol.AppMessage
 import io.github.haruto17.pivr180.protocol.BoundedReadInputStream
+import io.github.haruto17.pivr180.protocol.CameraSettings
 import io.github.haruto17.pivr180.protocol.Incoming
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.Channel
@@ -170,6 +171,14 @@ class ConnectionViewModel(
 
     fun dismissNotice() {
         controller?.dismissNotice()
+    }
+
+    fun loadSettings() {
+        controller?.loadSettings()
+    }
+
+    fun changeSettings(settings: CameraSettings) {
+        controller?.changeSettings(settings)
     }
 
     fun setPreviewWanted(wanted: Boolean) {
