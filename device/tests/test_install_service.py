@@ -4,6 +4,8 @@ import shutil
 import subprocess
 from pathlib import Path
 
+from pivr180_device.camera_settings import DEFAULT_SETTINGS_FILE
+
 DEVICE_DIR = Path(__file__).resolve().parents[1]
 INSTALL_SCRIPT = DEVICE_DIR / "scripts" / "install_service.sh"
 UNIT_TEMPLATE = DEVICE_DIR / "systemd" / "pivr180-capture.service.in"
@@ -112,6 +114,13 @@ def test_installed_unit_may_bind_port_80_for_the_web_ui(tmp_path):
     _, _, unit = install(tmp_path)
 
     assert "AmbientCapabilities=CAP_NET_BIND_SERVICE\n" in unit
+
+
+def test_installed_unit_provides_the_directory_for_the_camera_settings(tmp_path):
+    _, _, unit = install(tmp_path)
+
+    assert "StateDirectory=pivr180\n" in unit
+    assert DEFAULT_SETTINGS_FILE.parent == Path("/var/lib/pivr180")
 
 
 def test_installed_unit_routes_camera_sync_multicast_over_loopback_before_start(
