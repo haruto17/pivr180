@@ -2,13 +2,16 @@ package io.github.haruto17.pivr180.capture
 
 import io.github.haruto17.pivr180.connection.DeadlineScheduler
 import io.github.haruto17.pivr180.protocol.AppMessage
+import io.github.haruto17.pivr180.protocol.CameraSettings
 import io.github.haruto17.pivr180.protocol.Captures
 import io.github.haruto17.pivr180.protocol.DeviceMessage
 import io.github.haruto17.pivr180.protocol.ErrorMessage
 import io.github.haruto17.pivr180.protocol.GetMode
+import io.github.haruto17.pivr180.protocol.GetSettings
 import io.github.haruto17.pivr180.protocol.GetThumbnail
 import io.github.haruto17.pivr180.protocol.Mode
 import io.github.haruto17.pivr180.protocol.Ok
+import io.github.haruto17.pivr180.protocol.SetSettings
 import io.github.haruto17.pivr180.protocol.Settings
 import io.github.haruto17.pivr180.protocol.Shutdown
 import io.github.haruto17.pivr180.protocol.Shutter
@@ -34,6 +37,13 @@ private sealed interface Request {
     data class Preview(
         val send: Boolean,
     ) : Request
+
+    data object GetSettings : Request
+
+    data class SetSettings(
+        val settings: CameraSettings,
+        val previous: CameraSettings,
+    ) : Request
 }
 
 // Not synchronized: the caller confines it to one thread, which also runs the deadlines.
@@ -48,7 +58,12 @@ class CaptureController<I>(
         RequestTracker<Request>(deadlines, requestTimeout) {
             // Not left as it was: the device may have switched and its late ok is dropped.
             if (it is Request.Preview) deviceSendsPreview = null
-            fail(it, "no answer within $requestTimeout")
+            // Not reverted to the last known settings: the device may have applied the new ones and its late answer is dropped.
+            if (it is Request.SetSettings) {
+                settingsUnconfirmed("no answer within $requestTimeout")
+            } else {
+                fail(it, "no answer within $requestTimeout")
+            }
             publish()
         }
     private var state = CaptureState<I>()
@@ -56,6 +71,9 @@ class CaptureController<I>(
     private var ended = false
     private var deviceSendsPreview: Boolean? = true
     private var previewRequestPending = false
+    private var deviceSettings: CameraSettings? = null
+    private var wantedSettings: CameraSettings? = null
+    private var settingsRequestPending = false
 
     fun start() {
         if (started || ended) return
@@ -73,7 +91,7 @@ class CaptureController<I>(
             is Mode -> receiveMode(message)
             is ErrorMessage -> rejected(message)
             is Welcome -> unexpected(message.id, "welcome")
-            is Settings -> unexpected(message.id, "settings")
+            is Settings -> receiveSettings(message)
             is Captures -> unexpected(message.id, "captures")
         }
         publish()
@@ -129,6 +147,23 @@ class CaptureController<I>(
         reconcilePreview()
     }
 
+    fun loadSettings() {
+        if (!started || ended || settingsRequestPending || state.settings is SettingsState.Loaded) return
+        settingsRequestPending = true
+        send(GetSettings(requests.issue(Request.GetSettings)))
+        state = state.copy(settings = SettingsState.Loading)
+        publish()
+    }
+
+    fun changeSettings(settings: CameraSettings) {
+        if (!started || ended) return
+        val loaded = state.settings as? SettingsState.Loaded ?: return
+        wantedSettings = settings
+        state = state.copy(settings = loaded.copy(settings = settings, result = null))
+        reconcileSettings()
+        publish()
+    }
+
     fun dismissNotice() {
         if (ended) return
         state = state.copy(notice = null)
@@ -168,6 +203,54 @@ class CaptureController<I>(
             Request.GetMode -> state = state.copy(mode = ModeState.Known(message.mode))
             else -> fail(request, "unexpected mode")
         }
+    }
+
+    private fun receiveSettings(message: Settings) {
+        when (val request = requests.complete(message.id)) {
+            null -> Unit
+            Request.GetSettings -> settingsLoaded(message.settings)
+            is Request.SetSettings -> settingsSaved(request.settings, message.settings)
+            else -> fail(request, "unexpected settings")
+        }
+    }
+
+    private fun settingsLoaded(settings: CameraSettings) {
+        settingsRequestPending = false
+        deviceSettings = settings
+        wantedSettings = settings
+        state = state.copy(settings = SettingsState.Loaded(settings))
+    }
+
+    private fun settingsSaved(
+        sent: CameraSettings,
+        applied: CameraSettings,
+    ) {
+        settingsRequestPending = false
+        deviceSettings = applied
+        if (wantedSettings == sent) wantedSettings = applied
+        val loaded = state.settings as? SettingsState.Loaded ?: return
+        state = state.copy(settings = loaded.copy(settings = wantedSettings ?: applied, result = SaveResult.Saved))
+        reconcileSettings()
+    }
+
+    private fun settingsUnconfirmed(detail: String) {
+        settingsRequestPending = false
+        deviceSettings = null
+        wantedSettings = null
+        state = state.copy(settings = SettingsState.Unavailable(UnavailableReason.SAVE_UNCONFIRMED, detail))
+    }
+
+    private fun reconcileSettings() {
+        val loaded = state.settings as? SettingsState.Loaded ?: return
+        val wanted = wantedSettings
+        val device = deviceSettings
+        if (settingsRequestPending || wanted == null || device == null || wanted == device) {
+            state = state.copy(settings = loaded.copy(saving = settingsRequestPending))
+            return
+        }
+        settingsRequestPending = true
+        send(SetSettings(requests.issue(Request.SetSettings(wanted, device)), wanted))
+        state = state.copy(settings = loaded.copy(saving = true, result = null))
     }
 
     private fun setThumbnail(
@@ -226,6 +309,10 @@ class CaptureController<I>(
             is Request.Thumbnail -> {
                 fail(request, "unexpected ok")
             }
+
+            Request.GetSettings, is Request.SetSettings -> {
+                fail(request, "unexpected ok")
+            }
         }
     }
 
@@ -256,6 +343,18 @@ class CaptureController<I>(
                 is Request.Thumbnail -> {
                     setThumbnail(request, Thumbnail.Unavailable(detail))
                     state
+                }
+
+                Request.GetSettings -> {
+                    settingsRequestPending = false
+                    state.copy(settings = SettingsState.Unavailable(UnavailableReason.LOAD_FAILED, detail))
+                }
+
+                is Request.SetSettings -> {
+                    // Not retried with a newer value: a device that refuses one would likely refuse the next too.
+                    settingsRequestPending = false
+                    wantedSettings = request.previous
+                    state.copy(settings = SettingsState.Loaded(request.previous, result = SaveResult.Failed(detail)))
                 }
             }
     }
