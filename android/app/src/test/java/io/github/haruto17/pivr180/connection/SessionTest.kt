@@ -2,12 +2,16 @@ package io.github.haruto17.pivr180.connection
 
 import io.github.haruto17.pivr180.protocol.AccessoryChannel
 import io.github.haruto17.pivr180.protocol.AppMessage
+import io.github.haruto17.pivr180.protocol.DeviceState
 import io.github.haruto17.pivr180.protocol.FrameReader
 import io.github.haruto17.pivr180.protocol.Hello
+import io.github.haruto17.pivr180.protocol.Incoming
 import io.github.haruto17.pivr180.protocol.PROTOCOL_VERSION
+import io.github.haruto17.pivr180.protocol.Status
 import io.github.haruto17.pivr180.protocol.hex
 import io.github.haruto17.pivr180.protocol.jsonFrame
 import io.github.haruto17.pivr180.protocol.protocolJson
+import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -47,6 +51,23 @@ class SessionTest {
             listOf(ConnectionState.Connecting, ConnectionState.Connected("0.2.0"), ConnectionState.Disconnected),
             states,
         )
+    }
+
+    @Test
+    fun `passes what arrives after welcome to onIncoming`() {
+        val incoming = mutableListOf<Incoming>()
+        val input = ByteArrayInputStream(jsonFrame(welcome) + jsonFrame(status) + hex("00000002 02 ffd8"))
+
+        runSession(AccessoryChannel(input, ByteArrayOutputStream()), "0.1.0", close = {}, ManualDeadlineScheduler(), onIncoming = {
+            incoming += it
+        }) {}
+
+        assertEquals(2, incoming.size)
+        assertEquals(
+            Status(DeviceState.IDLE, captureCount = 0, freeBytes = 1, lastCapture = null),
+            (incoming[0] as Incoming.Message).message,
+        )
+        assertArrayEquals(hex("ffd8"), (incoming[1] as Incoming.Preview).jpeg)
     }
 
     @Test
@@ -166,7 +187,14 @@ class SessionTest {
         onState: (ConnectionState) -> Unit,
     ): Thread =
         thread(isDaemon = true) {
-            runSession(AccessoryChannel(input, ByteArrayOutputStream()), "0.1.0", input::close, deadlines, handshakeTimeout, onState)
+            runSession(
+                AccessoryChannel(input, ByteArrayOutputStream()),
+                "0.1.0",
+                input::close,
+                deadlines,
+                handshakeTimeout,
+                onState = onState,
+            )
         }
 
     private fun statesWhileReading(bytes: ByteArray): List<ConnectionState> {
