@@ -1,6 +1,7 @@
 package io.github.haruto17.pivr180.capture
 
 import io.github.haruto17.pivr180.protocol.CaptureMode
+import io.github.haruto17.pivr180.protocol.CaptureSummary
 import io.github.haruto17.pivr180.protocol.DeviceState
 import io.github.haruto17.pivr180.protocol.Status
 
@@ -11,6 +12,7 @@ data class CaptureState<out I>(
     val shutterPending: Boolean = false,
     val shutdown: ShutdownState = ShutdownState.NONE,
     val notice: Notice? = null,
+    val captureList: CaptureListState<I> = CaptureListState(),
 ) {
     val canShutter: Boolean
         get() = status != null && status.state != DeviceState.CAPTURING && !shutterPending && shutdown == ShutdownState.NONE
@@ -64,4 +66,29 @@ enum class NoticeKind {
     MODE_FAILED,
     PREVIEW_FAILED,
     MESSAGE_REJECTED,
+}
+
+data class CaptureListState<out I>(
+    val items: List<CaptureListItem<I>>? = null,
+    val loading: Boolean = false,
+    val notice: CaptureListNotice? = null,
+)
+
+data class CaptureListItem<out I>(
+    val summary: CaptureSummary,
+    val left: Thumbnail<I> = Thumbnail.Loading,
+    val right: Thumbnail<I> = Thumbnail.Loading,
+    val deleting: Boolean = false,
+)
+
+data class CaptureListNotice(
+    val kind: CaptureListNoticeKind,
+    val captureId: String?,
+    val detail: String,
+)
+
+enum class CaptureListNoticeKind {
+    LOAD_FAILED,
+    DELETE_FAILED,
+    ALREADY_DELETED,
 }

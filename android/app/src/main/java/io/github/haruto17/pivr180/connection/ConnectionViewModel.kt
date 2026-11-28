@@ -172,6 +172,22 @@ class ConnectionViewModel(
         controller?.dismissNotice()
     }
 
+    fun refreshCaptures() {
+        controller?.refreshCaptures()
+    }
+
+    fun showCaptures(captureIds: List<String>) {
+        controller?.showCaptures(captureIds)
+    }
+
+    fun deleteCapture(captureId: String) {
+        controller?.deleteCapture(captureId)
+    }
+
+    fun dismissCaptureListNotice() {
+        controller?.dismissCaptureListNotice()
+    }
+
     fun setPreviewWanted(wanted: Boolean) {
         previewWanted = wanted
         if (!wanted) mutablePreview.value = null

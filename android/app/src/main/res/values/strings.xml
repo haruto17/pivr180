@@ -39,4 +39,20 @@
     <string name="shutdown_confirm">シャットダウンする</string>
     <string name="cancel">キャンセル</string>
     <string name="shut_down">Pi をシャットダウンしました。</string>
+    <string name="destination_captures">撮影一覧</string>
+    <string name="captures_refresh">更新</string>
+    <string name="captures_loading">読み込み中…</string>
+    <string name="captures_not_loaded">撮影一覧を読み込めていません</string>
+    <string name="captures_none">撮影はありません</string>
+    <string name="captures_count">%1$d 件</string>
+    <string name="capture_incomplete">左右の画像がそろっていません</string>
+    <string name="capture_sync_warning">左右のカメラの同期がずれています</string>
+    <string name="delete">削除</string>
+    <string name="deleting">削除しています…</string>
+    <string name="delete_confirm_title">撮影を削除しますか？</string>
+    <string name="delete_confirm_text">%1$s を Pi から削除します。元に戻せません。</string>
+    <string name="delete_confirm">削除する</string>
+    <string name="notice_captures_load_failed">撮影一覧を読み込めませんでした: %1$s</string>
+    <string name="notice_delete_failed">%1$s を削除できませんでした: %2$s</string>
+    <string name="notice_already_deleted">%1$s は Pi にもうありません</string>
 </resources>
