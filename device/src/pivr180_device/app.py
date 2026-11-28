@@ -19,7 +19,12 @@ from pivr180_device.atoms3.pyserial import DEFAULT_PORT, open_serial_link
 from pivr180_device.button import ButtonShutter, Status
 from pivr180_device.camera.base import CameraPair
 from pivr180_device.camera.picamera2 import open_camera_pair
-from pivr180_device.camera_settings import CameraSettingsControl, settings_router
+from pivr180_device.camera_settings import (
+    DEFAULT_SETTINGS_FILE,
+    CameraSettingsControl,
+    SettingsFile,
+    settings_router,
+)
 from pivr180_device.captures_api import captures_router
 from pivr180_device.exposure import ExposurePreview, ExposureSettings, ExposureSync
 from pivr180_device.power import power_off
@@ -77,6 +82,7 @@ def run(
     show: ShowStatus = _ignore_status,
     slot: CameraSlot | None = None,
     board: StatusBoard | None = None,
+    settings: CameraSettingsControl | None = None,
 ) -> None:
     if slot is None:
         slot = CameraSlot()
@@ -99,6 +105,8 @@ def run(
         exposure = ExposureSync(pair)
         preview = ExposurePreview(exposure, on_error=preview_failed)
         with preview, slot.attach(LiveCameras(pair=pair, exposure=exposure)):
+            if settings is not None:
+                settings.restore()
             logger.info("ready to shoot")
             report(Status.IDLE)
             # Not trusting idle alone: the preview may have died before it was
@@ -166,6 +174,15 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         help=f"directory to save captures in (default: {DEFAULT_CAPTURE_ROOT})",
     )
     parser.add_argument(
+        "--settings-file",
+        type=Path,
+        default=DEFAULT_SETTINGS_FILE,
+        help=(
+            "file to keep the camera settings in across restarts "
+            f"(default: {DEFAULT_SETTINGS_FILE})"
+        ),
+    )
+    parser.add_argument(
         "--shutter",
         choices=(SHUTTER_BUTTON, SHUTTER_STDIN),
         default=SHUTTER_BUTTON,
@@ -206,7 +223,7 @@ def main(
     )
     storage = CaptureStorage(args.captures_dir)
     slot = CameraSlot()
-    camera_settings = CameraSettingsControl(slot)
+    camera_settings = CameraSettingsControl(slot, SettingsFile(args.settings_file))
     shutter: ButtonShutter | None = None
     shutdown_request = ShutdownRequest()
     board = StatusBoard(storage)
@@ -260,6 +277,7 @@ def main(
                         show,
                         slot,
                         board,
+                        camera_settings,
                     )
             except Exception:
                 show(Status.ERROR)
