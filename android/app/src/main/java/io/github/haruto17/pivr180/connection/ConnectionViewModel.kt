@@ -14,6 +14,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import io.github.haruto17.pivr180.BuildConfig
 import io.github.haruto17.pivr180.protocol.AccessoryChannel
+import io.github.haruto17.pivr180.protocol.BoundedReadInputStream
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -26,7 +27,8 @@ import java.io.IOException
 
 private const val TAG = "ConnectionViewModel"
 
-// f_accessory fails a bulk read whose buffer is smaller than the USB transfer, so reads go through a buffer of its size.
+// f_accessory fails a bulk read whose buffer is smaller than the USB transfer, so reads go through a buffer of its size,
+// and some kernels also fail a longer one, which BufferedInputStream would pass straight through, so each read is capped too.
 private const val ACCESSORY_READ_BUFFER_SIZE = 16384
 
 class ConnectionViewModel(
@@ -92,10 +94,18 @@ class ConnectionViewModel(
         viewModelScope.launch(Dispatchers.IO) {
             val channel =
                 AccessoryChannel(
-                    BufferedInputStream(FileInputStream(descriptor.fileDescriptor), ACCESSORY_READ_BUFFER_SIZE),
+                    BufferedInputStream(
+                        BoundedReadInputStream(FileInputStream(descriptor.fileDescriptor), ACCESSORY_READ_BUFFER_SIZE),
+                        ACCESSORY_READ_BUFFER_SIZE,
+                    ),
                     FileOutputStream(descriptor.fileDescriptor),
                 )
-            runSession(channel, BuildConfig.VERSION_NAME, close = { closeDescriptor(descriptor) }) { state ->
+            runSession(
+                channel,
+                BuildConfig.VERSION_NAME,
+                close = { closeDescriptor(descriptor) },
+                onError = { Log.w(TAG, "accessory session ended by an I/O failure", it) },
+            ) { state ->
                 viewModelScope.launch(Dispatchers.Main) {
                     if (openAccessory !== descriptor) return@launch
                     mutableState.value = state
