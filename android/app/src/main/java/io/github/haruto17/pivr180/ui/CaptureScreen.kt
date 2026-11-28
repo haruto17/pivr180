@@ -229,7 +229,7 @@ private fun LastCaptureSection(lastCapture: LastCaptureThumbnails<ImageBitmap>?)
 }
 
 @Composable
-private fun ThumbnailBox(
+internal fun ThumbnailBox(
     label: String,
     thumbnail: Thumbnail<ImageBitmap>,
     modifier: Modifier,
