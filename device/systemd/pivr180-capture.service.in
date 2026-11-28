@@ -13,6 +13,8 @@ ExecStartPre=+/usr/sbin/ip route replace 239.255.255.250/32 dev lo
 ExecStart=@DEVICE_DIR@/.venv/bin/pivr180-capture
 # Not User=root: only binding the web UI to port 80 needs privileges.
 AmbientCapabilities=CAP_NET_BIND_SERVICE
+# Not mkdir in install_service.sh: systemd creates /var/lib/pivr180, owned by User=, on start if it is missing.
+StateDirectory=pivr180
 Restart=on-failure
 RestartSec=5
 # Not SIGTERM: only KeyboardInterrupt stops the preview and releases the cameras and serial before exiting.

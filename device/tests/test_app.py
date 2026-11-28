@@ -37,7 +37,11 @@ from pivr180_device.atoms3.pyserial import DEFAULT_PORT
 from pivr180_device.button import Status
 from pivr180_device.camera import CameraPair, Controls, FrameMetadata
 from pivr180_device.camera.fake import FakeCamera, FakeFrame
-from pivr180_device.camera_settings import SETTINGS_PATH
+from pivr180_device.camera_settings import (
+    SETTINGS_PATH,
+    CameraSettingsControl,
+    SettingsFile,
+)
 from pivr180_device.exposure import ExposureSync
 from pivr180_device.preview import PREVIEW_PATH
 from pivr180_device.shutdown import SHUTDOWN_HEADER, SHUTDOWN_HEADER_VALUE
@@ -136,6 +140,14 @@ class AutoCamera(FakeCamera):
             else controls["AnalogueGain"],
             colour_gains=self.auto.colour_gains if auto_wb else controls["ColourGains"],
         )
+
+
+@pytest.fixture(autouse=True)
+def settings_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    # Not the real default: it would read and write the settings of this host.
+    path = tmp_path / "camera_settings.json"
+    monkeypatch.setattr("pivr180_device.app.DEFAULT_SETTINGS_FILE", path)
+    return path
 
 
 @pytest.fixture
@@ -484,6 +496,35 @@ def test_lends_the_cameras_to_the_web_ui_once_ready_to_shoot(
     assert isinstance(exposure, ExposureSync)
     assert previewing
     assert not slot.ready
+
+
+def test_restores_the_saved_settings_before_the_first_shot(
+    pair: CameraPair,
+    left: AutoCamera,
+    right: AutoCamera,
+    storage: CaptureStorage,
+    tmp_path: Path,
+):
+    slot = CameraSlot()
+    path = tmp_path / "saved_settings.json"
+    path.write_text(
+        json.dumps({"exposure_value": 1.0, "white_balance": "cloudy", "contrast": 0.5}),
+        encoding="utf-8",
+    )
+
+    run(
+        pair,
+        storage,
+        [None],
+        slot=slot,
+        settings=CameraSettingsControl(slot, SettingsFile(path)),
+    )
+
+    restored = {"ExposureValue": 1.0, "AwbMode": 6, "Contrast": 0.5}
+    for camera in (left, right):
+        assert camera.captured_with
+        for captured_with in camera.captured_with:
+            assert restored.items() <= captured_with.items()
 
 
 def test_takes_the_cameras_back_from_the_web_ui_before_stopping_them(
@@ -1418,6 +1459,65 @@ def test_main_web_ui_changes_the_settings_of_both_cameras_while_ready_to_shoot(
     client = TestClient(app)
     assert client.get(SETTINGS_PATH).json() == CHANGED_SETTINGS
     assert client.put(SETTINGS_PATH, json=CHANGED_SETTINGS).status_code == 503
+
+
+def test_main_keeps_the_settings_changed_on_the_web_ui_after_a_restart(
+    pair: CameraPair, tmp_path: Path
+):
+    path = tmp_path / "kept_settings.json"
+    first_web = ServeWebRecorder()
+    argv = [
+        "--shutter",
+        "stdin",
+        "--captures-dir",
+        str(tmp_path / "captures"),
+        "--settings-file",
+        str(path),
+    ]
+    assert (
+        main(
+            argv,
+            open_pair=OpenPairRecorder(pair),
+            stdin=SettingsChangingStdin(first_web),
+            serve_web=first_web,
+        )
+        == EXIT_OK
+    )
+    bus = CameraBus()
+    left, right = AutoCamera("left", bus), AutoCamera("right", bus)
+    second_web = ServeWebRecorder()
+
+    code = main(
+        argv,
+        open_pair=OpenPairRecorder(CameraPair(left=left, right=right)),
+        stdin=io.StringIO("\nq\n"),
+        serve_web=second_web,
+    )
+
+    assert code == EXIT_OK
+    changed = {"ExposureValue": 1.0, "AwbMode": 6, "Contrast": 0.5}
+    for camera in (left, right):
+        assert camera.captured_with
+        for captured_with in camera.captured_with:
+            assert changed.items() <= captured_with.items()
+    [(app, _, _)] = second_web.served
+    assert TestClient(app).get(SETTINGS_PATH).json() == CHANGED_SETTINGS
+
+
+def test_main_saves_the_settings_to_the_default_file(
+    pair: CameraPair, tmp_path: Path, settings_file: Path
+):
+    serve_web = ServeWebRecorder()
+
+    code = main(
+        ["--shutter", "stdin", "--captures-dir", str(tmp_path / "captures")],
+        open_pair=OpenPairRecorder(pair),
+        stdin=SettingsChangingStdin(serve_web),
+        serve_web=serve_web,
+    )
+
+    assert code == EXIT_OK
+    assert json.loads(settings_file.read_text(encoding="utf-8")) == CHANGED_SETTINGS
 
 
 def test_main_keeps_shooting_when_the_web_ui_cannot_start(

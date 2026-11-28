@@ -33,7 +33,11 @@ from pivr180_device.aoa.session import (
 from pivr180_device.button import Status
 from pivr180_device.camera import CameraPair, FrameMetadata
 from pivr180_device.camera.fake import FakeCamera, FakeFrame
-from pivr180_device.camera_settings import CameraSettingsControl
+from pivr180_device.camera_settings import (
+    CameraSettings,
+    CameraSettingsControl,
+    SettingsFile,
+)
 from pivr180_device.exposure import ExposureSettings, ExposureSync
 from pivr180_device.preview import PreviewFrames
 from pivr180_device.slot import CameraSlot, LiveCameras
@@ -387,6 +391,21 @@ def test_settings_are_applied_to_both_cameras_and_read_back(rig: Rig):
     controls = {"ExposureValue": -0.5, "AwbMode": 5, "Contrast": 1.2}
     assert rig.left.controls == controls
     assert rig.right.controls == controls
+
+
+def test_settings_set_from_the_app_are_saved_for_the_next_start(
+    rig: Rig, tmp_path: Path
+):
+    file = SettingsFile(tmp_path / "camera_settings.json")
+    session = rig.open(settings=CameraSettingsControl(rig.slot, file))
+    rig.handshake(session)
+
+    session.on_frame(json_frame(example("set_settings")))
+    rig.wait_for_answer("settings", 4)
+
+    assert file.load() == CameraSettings(
+        exposure_value=-0.5, white_balance="daylight", contrast=1.2
+    )
 
 
 def test_mode_is_photo(rig: Rig):

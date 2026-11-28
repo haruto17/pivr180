@@ -79,6 +79,13 @@ with open_camera_pair(left_index=0, right_index=1) as pair:
    sudo chown "$USER" /data/captures
    ```
 
+   systemd のサービスにせずに起動する場合は、撮影設定の保存先も用意する（[撮影設定](#撮影設定)）。サービスでは systemd が作る。
+
+   ```sh
+   sudo mkdir -p /var/lib/pivr180
+   sudo chown "$USER" /var/lib/pivr180
+   ```
+
 2. `device/` で起動する。
 
    ```sh
@@ -90,6 +97,7 @@ with open_camera_pair(left_index=0, right_index=1) as pair:
    | `--left` | `0` | 左カメラの番号 |
    | `--right` | `1` | 右カメラの番号 |
    | `--captures-dir` | `/data/captures` | 保存先 |
+   | `--settings-file` | `/var/lib/pivr180/camera_settings.json` | 撮影設定の保存先（[撮影設定](#撮影設定)） |
    | `--shutter` | `button` | `button`: AtomS3 Lite のボタン、`stdin`: 標準入力 |
    | `--button-port` | `/dev/serial/by-id/usb-Espressif*` | AtomS3 Lite のシリアルデバイスのパス（glob も可） |
    | `--web-port` | `80` | スマホ Web UI のポート（[スマホ Web UI](#スマホ-web-ui)） |
@@ -279,7 +287,11 @@ nmcli connection show --active
 - 左右のカメラ両方に同じ値を設定する。露出補正とホワイトバランスは左の AE/AWB に効き、その結果がプレビュー中のコピーで右に移る。コントラストは左右それぞれに効く。
 - 撮影中に変更した場合は、その撮影が終わってから反映する。1 回の撮影の左右で設定が食い違うことはない。
 - 左右の同期を待っている間や、カメラを解放した後は 503 を返し、設定は変えない。画面にはメッセージを出し、反映済みの値に戻す。
-- 設定は撮影ソフトのメモリにだけ持つ。撮影ソフトを起動し直すと初期値に戻る。`meta.json` には記録しない。
+- 変更した設定は `--settings-file`（既定は `/var/lib/pivr180/camera_settings.json`）に保存し、撮影ソフトや Pi を起動し直しても残る。AOA のアプリから変更した場合も同じ。値が変わったときだけ書き、一時ファイルに書いてから置き換えるので、途中で電源が切れても半分だけ書かれたファイルは残らない。`meta.json` には記録しない。
+  - 起動時に読み込み、左右の同期が済んだら `ready` の前にカメラへ反映する。
+  - ファイルがない場合は初期値で起動する（初回の起動では INFO のログだけ出す）。読めない、JSON が壊れている、値が範囲外や不明な場合は、WARNING のログに理由を出して初期値で起動する。
+  - 保存に失敗した場合は、ERROR のログを出す。設定はカメラに反映したまま使い続けるが、起動し直すと前に保存した値に戻る。
+  - 中身は `cat /var/lib/pivr180/camera_settings.json` で確かめられる。初期値に戻すには、撮影ソフトを止めてからファイルを消す。
 
 ### 撮影一覧と削除
 
