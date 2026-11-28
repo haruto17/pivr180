@@ -20,6 +20,7 @@ import io.github.haruto17.pivr180.capture.CaptureController
 import io.github.haruto17.pivr180.capture.CaptureState
 import io.github.haruto17.pivr180.protocol.AccessoryChannel
 import io.github.haruto17.pivr180.protocol.AppMessage
+import io.github.haruto17.pivr180.protocol.BoundedReadInputStream
 import io.github.haruto17.pivr180.protocol.Incoming
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.Channel
@@ -36,7 +37,8 @@ import java.io.IOException
 
 private const val TAG = "ConnectionViewModel"
 
-// f_accessory fails a bulk read whose buffer is smaller than the USB transfer, so reads go through a buffer of its size.
+// f_accessory fails a bulk read whose buffer is smaller than the USB transfer, so reads go through a buffer of its size,
+// and some kernels also fail a longer one, which BufferedInputStream would pass straight through, so each read is capped too.
 private const val ACCESSORY_READ_BUFFER_SIZE = 16384
 
 class ConnectionViewModel(
@@ -134,7 +136,10 @@ class ConnectionViewModel(
         viewModelScope.launch(Dispatchers.IO) {
             val channel =
                 AccessoryChannel(
-                    BufferedInputStream(FileInputStream(descriptor.fileDescriptor), ACCESSORY_READ_BUFFER_SIZE),
+                    BufferedInputStream(
+                        BoundedReadInputStream(FileInputStream(descriptor.fileDescriptor), ACCESSORY_READ_BUFFER_SIZE),
+                        ACCESSORY_READ_BUFFER_SIZE,
+                    ),
                     FileOutputStream(descriptor.fileDescriptor),
                 )
             launch { sendAll(channel, messages, descriptor) }
@@ -143,6 +148,7 @@ class ConnectionViewModel(
                 BuildConfig.VERSION_NAME,
                 close = { closeDescriptor(descriptor) },
                 onIncoming = { receive(created, it) },
+                onError = { Log.w(TAG, "accessory session ended by an I/O failure", it) },
             ) { state ->
                 viewModelScope.launch(Dispatchers.Main) {
                     if (openAccessory !== descriptor) return@launch

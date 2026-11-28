@@ -40,6 +40,7 @@ fun runSession(
     deadlines: DeadlineScheduler = executorDeadlineScheduler,
     handshakeTimeout: Duration = HANDSHAKE_TIMEOUT,
     onIncoming: (Incoming) -> Unit = {},
+    onError: (IOException) -> Unit,
     onState: (ConnectionState) -> Unit,
 ) {
     onState(ConnectionState.Connecting)
@@ -67,6 +68,7 @@ fun runSession(
         }
     } catch (e: IOException) {
         if (phase.getAndSet(Phase.ENDED) == Phase.ENDED) return
+        onError(e)
         onState(if (e is MalformedFrameException) ConnectionState.Failed(e.message.orEmpty()) else ConnectionState.Disconnected)
     } finally {
         cancelDeadline()
